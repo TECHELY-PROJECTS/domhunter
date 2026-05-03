@@ -13,7 +13,7 @@ export function Layout({ children, noPadding = false }: LayoutProps) {
   const [location] = useLocation();
 
   const navigation = [
-    { name: "Terminal", href: "/", icon: Activity },
+    { name: "Terminal", href: "/terminal", icon: Activity },
     { name: "Explore", href: "/explore", icon: Search },
     { name: "Portfolio", href: "/portfolio", icon: Briefcase },
     { name: "Analytics", href: "/analytics", icon: BarChart2 },

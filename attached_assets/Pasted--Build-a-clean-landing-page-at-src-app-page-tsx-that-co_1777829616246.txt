@@ -1,0 +1,144 @@
+```
+Build a clean landing page at /src/app/page.tsx that converts visitors.
+
+import Link from 'next/link'
+import { prisma } from '@/lib/prisma'
+
+async function getStats() {
+  const [total, buySignals, withValue] = await Promise.all([
+    prisma.domain.count(),
+    prisma.metrics.count({ where: { recommendation: 'BUY' } }),
+    prisma.metrics.count({ where: { estimatedValue: { gt: 500 } } }),
+  ])
+  return { total, buySignals, withValue }
+}
+
+async function getSampleDomains() {
+  return prisma.domain.findMany({
+    where: { metrics: { recommendation: 'BUY', rarityScore: { gte: 65 } } },
+    include: { metrics: true },
+    orderBy: { metrics: { rarityScore: 'desc' } },
+    take: 5,
+  })
+}
+
+export default async function Home() {
+  const [stats, samples] = await Promise.all([getStats(), getSampleDomains()])
+
+  return (
+    <main className="min-h-screen bg-white">
+
+      {/* Hero */}
+      <section className="bg-gradient-to-br from-blue-900 to-blue-700 text-white py-20 px-4">
+        <div className="max-w-4xl mx-auto text-center">
+          <div className="inline-block bg-blue-800 text-blue-200 text-sm px-3 py-1 rounded-full mb-6">
+            AI-powered · Updated every 6 hours · Free to explore
+          </div>
+          <h1 className="text-5xl font-bold mb-5 leading-tight">
+            Find Valuable Expiring Domains<br />
+            <span className="text-blue-300">Before Anyone Else Does</span>
+          </h1>
+          <p className="text-xl text-blue-100 mb-8 max-w-2xl mx-auto">
+            DomHunter scans 200,000+ expiring domains daily, scores them for brandability and investment potential with AI, and surfaces the best ones instantly.
+          </p>
+          <div className="flex gap-3 justify-center flex-wrap">
+            <Link href="/explore"
+              className="bg-white text-blue-900 font-bold px-8 py-3 rounded-lg hover:bg-blue-50 transition-colors">
+              Browse Domains →
+            </Link>
+            <Link href="/brand-checker"
+              className="border border-blue-400 text-white font-medium px-8 py-3 rounded-lg hover:bg-blue-800 transition-colors">
+              Check Any Domain
+            </Link>
+          </div>
+        </div>
+      </section>
+
+      {/* Stats */}
+      <section className="bg-gray-50 py-10 px-4 border-b border-gray-100">
+        <div className="max-w-4xl mx-auto grid grid-cols-3 gap-6 text-center">
+          {[
+            { value: stats.total.toLocaleString(), label: 'Domains Tracked' },
+            { value: stats.buySignals.toLocaleString(), label: 'BUY Signals Today' },
+            { value: stats.withValue.toLocaleString(), label: 'Valued Over $500' },
+          ].map(s => (
+            <div key={s.label}>
+              <div className="text-3xl font-bold text-blue-700">{s.value}</div>
+              <div className="text-sm text-gray-500 mt-1">{s.label}</div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* Sample domains */}
+      {samples.length > 0 && (
+        <section className="py-14 px-4">
+          <div className="max-w-4xl mx-auto">
+            <h2 className="text-2xl font-bold text-gray-900 mb-2">Today's Top BUY Signals</h2>
+            <p className="text-gray-500 mb-6 text-sm">Live from the pipeline — updated every 6 hours</p>
+            <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50 text-xs text-gray-500 uppercase">
+                  <tr>
+                    <th className="text-left px-4 py-3">Domain</th>
+                    <th className="text-center px-4 py-3">Score</th>
+                    <th className="text-center px-4 py-3">Brand</th>
+                    <th className="text-center px-4 py-3">Est. Value</th>
+                    <th className="text-center px-4 py-3">Niche</th>
+                    <th className="px-4 py-3"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {samples.map((d: any) => (
+                    <tr key={d.id} className="border-t border-gray-50">
+                      <td className="px-4 py-3 font-mono font-semibold text-blue-700">{d.name}</td>
+                      <td className="px-4 py-3 text-center font-bold">{d.metrics?.rarityScore?.toFixed(0)}</td>
+                      <td className="px-4 py-3 text-center">{d.metrics?.brandScore?.toFixed(0)}</td>
+                      <td className="px-4 py-3 text-center font-medium">
+                        {d.metrics?.estimatedValue ? `$${d.metrics.estimatedValue >= 1000 ? `${(d.metrics.estimatedValue/1000).toFixed(1)}K` : d.metrics.estimatedValue}` : '—'}
+                      </td>
+                      <td className="px-4 py-3 text-center text-gray-500 capitalize">{d.metrics?.niche}</td>
+                      <td className="px-4 py-3">
+                        <Link href={`/domain/${d.name}`} className="text-xs text-blue-600 hover:underline">View →</Link>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="text-center mt-4">
+              <Link href="/explore" className="text-blue-600 hover:underline text-sm font-medium">
+                See all domains →
+              </Link>
+            </div>
+          </div>
+        </section>
+      )}
+
+      {/* Feature list */}
+      <section className="bg-gray-50 py-14 px-4 border-t border-gray-100">
+        <div className="max-w-4xl mx-auto">
+          <h2 className="text-2xl font-bold text-gray-900 text-center mb-10">Everything in one place</h2>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            {[
+              { icon: '🤖', title: 'AI Scoring', desc: 'Every domain scored for brandability, niche fit, and estimated USD value using AI.' },
+              { icon: '⏰', title: 'Live Auction Feed', desc: 'GoDaddy, NameJet, expireddomains.net — updated every 6 hours automatically.' },
+              { icon: '🔔', title: 'Smart Alerts', desc: 'Save your filter. Get an email the moment matching domains appear.' },
+              { icon: '🔍', title: 'Brand Checker', desc: 'Type any keyword, get 12 domain variations scored and analyzed instantly.' },
+              { icon: '📊', title: 'Free Metrics', desc: 'Domain authority, backlinks, age, WHOIS history — all free APIs, no Majestic needed.' },
+              { icon: '💾', title: 'Watchlist', desc: 'Save domains you\'re considering. Track value changes over time.' },
+            ].map(f => (
+              <div key={f.title} className="bg-white rounded-xl p-5 border border-gray-100">
+                <div className="text-2xl mb-3">{f.icon}</div>
+                <h3 className="font-semibold text-gray-900 mb-1">{f.title}</h3>
+                <p className="text-sm text-gray-500">{f.desc}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+    </main>
+  )
+}
+```

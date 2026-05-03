@@ -4,6 +4,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/not-found";
 import { Layout } from "@/components/layout";
+import Landing from "@/pages/landing";
 import Home from "@/pages/home";
 import Explore from "@/pages/explore";
 import DomainDetail from "@/pages/domain-detail";
@@ -22,6 +23,7 @@ const queryClient = new QueryClient({
 function Router() {
   return (
     <Switch>
+      <Route path="/" component={Landing} />
       <Route path="/explore">
         <Layout noPadding>
           <Explore />
@@ -30,7 +32,7 @@ function Router() {
       <Route>
         <Layout>
           <Switch>
-            <Route path="/" component={Home} />
+            <Route path="/terminal" component={Home} />
             <Route path="/domain/:fqdn" component={DomainDetail} />
             <Route path="/portfolio" component={Portfolio} />
             <Route path="/analytics" component={Analytics} />
