@@ -1,0 +1,135 @@
+```
+Set up daily email alerts and cron endpoints.
+
+Create /src/app/api/cron/ingest/route.ts:
+
+import { NextRequest, NextResponse } from 'next/server'
+
+export async function GET(req: NextRequest) {
+  if (req.headers.get('authorization') !== `Bearer ${process.env.CRON_SECRET}`) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
+  const res = await fetch(`${process.env.NEXTAUTH_URL}/api/ingest`, {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${process.env.CRON_SECRET}` },
+  })
+
+  return NextResponse.json(await res.json())
+}
+
+Create /src/app/api/cron/alerts/route.ts:
+
+import { NextRequest, NextResponse } from 'next/server'
+import { Resend } from 'resend'
+import { prisma } from '@/lib/prisma'
+
+const resend = new Resend(process.env.RESEND_API_KEY)
+
+export async function GET(req: NextRequest) {
+  if (req.headers.get('authorization') !== `Bearer ${process.env.CRON_SECRET}`) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
+  const alerts = await prisma.alert.findMany({
+    where: { active: true },
+    include: { user: true },
+  })
+
+  let sent = 0
+
+  for (const alert of alerts) {
+    const f = alert.filterJson as any
+    const since = alert.lastSentAt || new Date(Date.now() - 24 * 60 * 60 * 1000)
+
+    const domains = await prisma.domain.findMany({
+      where: {
+        createdAt: { gte: since },
+        metrics: {
+          ...(f.minScore && { rarityScore: { gte: f.minScore } }),
+          ...(f.recommendation && { recommendation: f.recommendation }),
+          ...(f.niche && { niche: f.niche }),
+          ...(f.tier && { rarityTier: f.tier }),
+        },
+        ...(f.tlds?.length && { tld: { in: f.tlds } }),
+      },
+      include: { metrics: true },
+      orderBy: { metrics: { rarityScore: 'desc' } },
+      take: 15,
+    })
+
+    if (!domains.length || !alert.user.email) continue
+
+    await resend.emails.send({
+      from: `DomHunter Alerts <${process.env.EMAIL_FROM}>`,
+      to: alert.user.email,
+      subject: `🎯 ${domains.length} new domains match "${alert.name}"`,
+      html: `
+        <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+          <h2 style="color: #1e3a5f; margin-bottom: 4px;">New Domain Matches</h2>
+          <p style="color: #6b7280; font-size: 14px; margin-bottom: 20px;">
+            Filter: <strong>${alert.name}</strong> · ${domains.length} domains found
+          </p>
+          <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+            <thead>
+              <tr style="background: #f9fafb; color: #6b7280; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;">
+                <td style="padding: 10px 12px; border-bottom: 1px solid #e5e7eb;">Domain</td>
+                <td style="padding: 10px 12px; border-bottom: 1px solid #e5e7eb; text-align: center;">Score</td>
+                <td style="padding: 10px 12px; border-bottom: 1px solid #e5e7eb; text-align: center;">Value</td>
+                <td style="padding: 10px 12px; border-bottom: 1px solid #e5e7eb; text-align: center;">Signal</td>
+              </tr>
+            </thead>
+            <tbody>
+              ${domains.map(d => `
+                <tr>
+                  <td style="padding: 10px 12px; border-bottom: 1px solid #f3f4f6; font-family: monospace; font-weight: 600; color: #2563eb;">
+                    <a href="${process.env.NEXTAUTH_URL}/domain/${d.name}" style="color: #2563eb; text-decoration: none;">${d.name}</a>
+                  </td>
+                  <td style="padding: 10px 12px; border-bottom: 1px solid #f3f4f6; text-align: center; font-weight: bold;">${d.metrics?.rarityScore?.toFixed(0) ?? '—'}</td>
+                  <td style="padding: 10px 12px; border-bottom: 1px solid #f3f4f6; text-align: center;">
+                    ${d.metrics?.estimatedValue ? `$${d.metrics.estimatedValue >= 1000 ? `${(d.metrics.estimatedValue/1000).toFixed(1)}K` : d.metrics.estimatedValue}` : '—'}
+                  </td>
+                  <td style="padding: 10px 12px; border-bottom: 1px solid #f3f4f6; text-align: center;">
+                    <span style="padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: bold; background: ${d.metrics?.recommendation === 'BUY' ? '#dcfce7' : d.metrics?.recommendation === 'WATCH' ? '#fef9c3' : '#f3f4f6'}; color: ${d.metrics?.recommendation === 'BUY' ? '#166534' : d.metrics?.recommendation === 'WATCH' ? '#854d0e' : '#6b7280'};">
+                      ${d.metrics?.recommendation ?? '—'}
+                    </span>
+                  </td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+          <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #e5e7eb;">
+            <a href="${process.env.NEXTAUTH_URL}/explore" style="background: #2563eb; color: white; padding: 10px 20px; border-radius: 8px; text-decoration: none; font-size: 14px; font-weight: 600;">
+              Browse All Domains →
+            </a>
+            <a href="${process.env.NEXTAUTH_URL}/settings/alerts" style="color: #9ca3af; font-size: 12px; margin-left: 16px; text-decoration: none;">
+              Manage alerts
+            </a>
+          </div>
+        </div>
+      `,
+    })
+
+    await prisma.alert.update({
+      where: { id: alert.id },
+      data: { lastSentAt: new Date() },
+    })
+
+    sent++
+  }
+
+  return NextResponse.json({ processed: alerts.length, sent })
+}
+
+Add to vercel.json (or set up in Hostinger cPanel cron):
+{
+  "crons": [
+    { "path": "/api/cron/ingest", "schedule": "0 */6 * * *" },
+    { "path": "/api/cron/alerts", "schedule": "0 8 * * *" }
+  ]
+}
+
+For Hostinger, add these two cron jobs in hPanel → Cron Jobs:
+  0 */6 * * *  curl -s -H "Authorization: Bearer YOUR_CRON_SECRET" https://yourdomain.com/api/cron/ingest
+  0 8 * * *    curl -s -H "Authorization: Bearer YOUR_CRON_SECRET" https://yourdomain.com/api/cron/alerts
+```
