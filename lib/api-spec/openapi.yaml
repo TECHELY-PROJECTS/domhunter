@@ -3,20 +3,27 @@ info:
   # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: DomHunter API specification
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: domains
+    description: Domain listing and detail
+  - name: watchlist
+    description: User domain watchlist
+  - name: analytics
+    description: Scoring and analytics
+  - name: brand-checker
+    description: AI brand analysis
 paths:
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
       summary: Health check
-      description: Returns server health status
       responses:
         "200":
           description: Healthy
@@ -24,6 +31,349 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /domains:
+    get:
+      operationId: listDomains
+      tags: [domains]
+      summary: List domains with pagination and filtering
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 25
+        - name: search
+          in: query
+          schema:
+            type: string
+        - name: tld
+          in: query
+          schema:
+            type: string
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [EXPIRING, EXPIRED, AVAILABLE, TAKEN, AUCTION, UNKNOWN]
+        - name: source
+          in: query
+          schema:
+            type: string
+        - name: minScore
+          in: query
+          schema:
+            type: number
+        - name: maxScore
+          in: query
+          schema:
+            type: number
+        - name: minDA
+          in: query
+          schema:
+            type: number
+        - name: recommendation
+          in: query
+          schema:
+            type: string
+            enum: [BUY, WATCH, SKIP]
+        - name: niche
+          in: query
+          schema:
+            type: string
+        - name: sortBy
+          in: query
+          schema:
+            type: string
+            enum: [rarityScore, brandScore, domainAuthority, createdAt, auctionEndAt, currentBid]
+            default: rarityScore
+        - name: sortDir
+          in: query
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
+      responses:
+        "200":
+          description: Paginated domain list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DomainListResponse"
+
+  /domains/{fqdn}:
+    get:
+      operationId: getDomain
+      tags: [domains]
+      summary: Get domain details by FQDN
+      parameters:
+        - name: fqdn
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Domain detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DomainDetail"
+        "404":
+          description: Domain not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /domains/stats:
+    get:
+      operationId: getDomainStats
+      tags: [domains]
+      summary: Dashboard summary stats
+      responses:
+        "200":
+          description: Domain stats
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DomainStats"
+
+  /domains/recent:
+    get:
+      operationId: getRecentDomains
+      tags: [domains]
+      summary: Recently added domains
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 10
+      responses:
+        "200":
+          description: Recent domains
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Domain"
+
+  /domains/top-scoring:
+    get:
+      operationId: getTopScoringDomains
+      tags: [domains]
+      summary: Top scoring domains by tier
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 10
+      responses:
+        "200":
+          description: Top scoring domains
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Domain"
+
+  /domains/expiring-soon:
+    get:
+      operationId: getExpiringSoonDomains
+      tags: [domains]
+      summary: Domains expiring soon (auction ending soon)
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 10
+      responses:
+        "200":
+          description: Expiring soon domains
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Domain"
+
+  /watchlist:
+    get:
+      operationId: getWatchlist
+      tags: [watchlist]
+      summary: Get current user watchlist
+      responses:
+        "200":
+          description: Watchlist items
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/WatchlistItem"
+    post:
+      operationId: addToWatchlist
+      tags: [watchlist]
+      summary: Add domain to watchlist
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddToWatchlistBody"
+      responses:
+        "201":
+          description: Added to watchlist
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WatchlistItem"
+        "409":
+          description: Already in watchlist
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /watchlist/{domainId}:
+    delete:
+      operationId: removeFromWatchlist
+      tags: [watchlist]
+      summary: Remove domain from watchlist
+      parameters:
+        - name: domainId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Removed from watchlist
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+        "404":
+          description: Not found in watchlist
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /analytics/score-distribution:
+    get:
+      operationId: getScoreDistribution
+      tags: [analytics]
+      summary: Distribution of domain scores by tier
+      responses:
+        "200":
+          description: Score distribution
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TierCount"
+
+  /analytics/niche-breakdown:
+    get:
+      operationId: getNicheBreakdown
+      tags: [analytics]
+      summary: Domain counts grouped by niche
+      responses:
+        "200":
+          description: Niche breakdown
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/NicheCount"
+
+  /analytics/source-breakdown:
+    get:
+      operationId: getSourceBreakdown
+      tags: [analytics]
+      summary: Domain counts grouped by source
+      responses:
+        "200":
+          description: Source breakdown
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SourceCount"
+
+  /analytics/da-vs-score:
+    get:
+      operationId: getDaVsScore
+      tags: [analytics]
+      summary: DA vs rarity score scatter data
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 200
+      responses:
+        "200":
+          description: DA vs score data points
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/DaScorePoint"
+
+  /brand-checker:
+    post:
+      operationId: checkBrand
+      tags: [brand-checker]
+      summary: AI-powered domain brand analysis
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BrandCheckBody"
+      responses:
+        "200":
+          description: Brand analysis result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BrandCheckResult"
+
+  /ingest:
+    post:
+      operationId: triggerIngest
+      tags: [domains]
+      summary: Trigger domain ingestion from sources
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IngestBody"
+      responses:
+        "202":
+          description: Ingest triggered
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+
 components:
   schemas:
     HealthStatus:
@@ -34,3 +384,341 @@ components:
       required:
         - status
 
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+      required:
+        - error
+
+    MessageResponse:
+      type: object
+      properties:
+        message:
+          type: string
+      required:
+        - message
+
+    Domain:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        sld:
+          type: string
+        tld:
+          type: string
+        status:
+          type: string
+          enum: [EXPIRING, EXPIRED, AVAILABLE, TAKEN, AUCTION, UNKNOWN]
+        source:
+          type: string
+          nullable: true
+        auctionUrl:
+          type: string
+          nullable: true
+        auctionEndAt:
+          type: string
+          nullable: true
+        currentBid:
+          type: number
+          nullable: true
+        bidCount:
+          type: integer
+          nullable: true
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+        metrics:
+          $ref: "#/components/schemas/Metrics"
+          nullable: true
+      required:
+        - id
+        - name
+        - sld
+        - tld
+        - status
+        - createdAt
+        - updatedAt
+
+    Metrics:
+      type: object
+      properties:
+        id:
+          type: string
+        domainId:
+          type: string
+        domainAuthority:
+          type: number
+          nullable: true
+        backlinks:
+          type: integer
+          nullable: true
+        referringDomains:
+          type: integer
+          nullable: true
+        domainAge:
+          type: integer
+          nullable: true
+        registrar:
+          type: string
+          nullable: true
+        lengthScore:
+          type: number
+          nullable: true
+        tldScore:
+          type: number
+          nullable: true
+        pronounceScore:
+          type: number
+          nullable: true
+        keywordScore:
+          type: number
+          nullable: true
+        rarityScore:
+          type: number
+          nullable: true
+        rarityTier:
+          type: string
+          nullable: true
+        brandScore:
+          type: number
+          nullable: true
+        estimatedValue:
+          type: number
+          nullable: true
+        niche:
+          type: string
+          nullable: true
+        recommendation:
+          type: string
+          nullable: true
+        aiReason:
+          type: string
+          nullable: true
+        trendScore:
+          type: number
+          nullable: true
+        enrichedAt:
+          type: string
+          nullable: true
+        updatedAt:
+          type: string
+      required:
+        - id
+        - domainId
+        - updatedAt
+
+    DomainDetail:
+      allOf:
+        - $ref: "#/components/schemas/Domain"
+        - type: object
+          properties:
+            watchedByCount:
+              type: integer
+
+    DomainListResponse:
+      type: object
+      properties:
+        domains:
+          type: array
+          items:
+            $ref: "#/components/schemas/Domain"
+        total:
+          type: integer
+        page:
+          type: integer
+        limit:
+          type: integer
+        totalPages:
+          type: integer
+      required:
+        - domains
+        - total
+        - page
+        - limit
+        - totalPages
+
+    DomainStats:
+      type: object
+      properties:
+        totalDomains:
+          type: integer
+        totalAuctions:
+          type: integer
+        totalAvailable:
+          type: integer
+        avgRarityScore:
+          type: number
+        legendaryCount:
+          type: integer
+        epicCount:
+          type: integer
+        rareCount:
+          type: integer
+        newToday:
+          type: integer
+      required:
+        - totalDomains
+        - totalAuctions
+        - totalAvailable
+        - avgRarityScore
+        - legendaryCount
+        - epicCount
+        - rareCount
+        - newToday
+
+    WatchlistItem:
+      type: object
+      properties:
+        id:
+          type: string
+        userId:
+          type: string
+        domainId:
+          type: string
+        notes:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+        domain:
+          $ref: "#/components/schemas/Domain"
+      required:
+        - id
+        - userId
+        - domainId
+        - createdAt
+        - domain
+
+    AddToWatchlistBody:
+      type: object
+      properties:
+        domainId:
+          type: string
+        notes:
+          type: string
+          nullable: true
+      required:
+        - domainId
+
+    TierCount:
+      type: object
+      properties:
+        tier:
+          type: string
+        count:
+          type: integer
+        avgScore:
+          type: number
+      required:
+        - tier
+        - count
+        - avgScore
+
+    NicheCount:
+      type: object
+      properties:
+        niche:
+          type: string
+        count:
+          type: integer
+      required:
+        - niche
+        - count
+
+    SourceCount:
+      type: object
+      properties:
+        source:
+          type: string
+        count:
+          type: integer
+      required:
+        - source
+        - count
+
+    DaScorePoint:
+      type: object
+      properties:
+        name:
+          type: string
+        da:
+          type: number
+        rarityScore:
+          type: number
+        tier:
+          type: string
+      required:
+        - name
+        - da
+        - rarityScore
+        - tier
+
+    BrandCheckBody:
+      type: object
+      properties:
+        domain:
+          type: string
+        context:
+          type: string
+          nullable: true
+      required:
+        - domain
+
+    BrandCheckResult:
+      type: object
+      properties:
+        domain:
+          type: string
+        brandScore:
+          type: number
+        pronounceScore:
+          type: number
+        lengthScore:
+          type: number
+        memorability:
+          type: number
+        estimatedValue:
+          type: number
+        recommendation:
+          type: string
+          enum: [BUY, WATCH, SKIP]
+        niche:
+          type: string
+        reasoning:
+          type: string
+        strengths:
+          type: array
+          items:
+            type: string
+        weaknesses:
+          type: array
+          items:
+            type: string
+      required:
+        - domain
+        - brandScore
+        - pronounceScore
+        - lengthScore
+        - memorability
+        - estimatedValue
+        - recommendation
+        - niche
+        - reasoning
+        - strengths
+        - weaknesses
+
+    IngestBody:
+      type: object
+      properties:
+        source:
+          type: string
+          enum: [godaddy, namejet, expired_domains, icann, sample]
+          default: sample
+      required:
+        - source
