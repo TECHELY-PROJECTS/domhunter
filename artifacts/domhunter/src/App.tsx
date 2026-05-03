@@ -11,6 +11,7 @@ import DomainDetail from "@/pages/domain-detail";
 import Portfolio from "@/pages/portfolio";
 import Analytics from "@/pages/analytics";
 import BrandChecker from "@/pages/brand-checker";
+import Alerts from "@/pages/alerts";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -37,6 +38,7 @@ function Router() {
             <Route path="/portfolio" component={Portfolio} />
             <Route path="/analytics" component={Analytics} />
             <Route path="/brand-checker" component={BrandChecker} />
+            <Route path="/alerts" component={Alerts} />
             <Route component={NotFound} />
           </Switch>
         </Layout>

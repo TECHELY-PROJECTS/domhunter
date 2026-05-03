@@ -21,7 +21,8 @@
     "ioredis": "^5.10.1",
     "openai": "^6.27.0",
     "pino": "^9",
-    "pino-http": "^10"
+    "pino-http": "^10",
+    "zod": "catalog:"
   },
   "devDependencies": {
     "@types/cookie-parser": "^1.4.10",

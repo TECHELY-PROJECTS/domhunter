@@ -1,6 +1,6 @@
 import { ReactNode } from "react";
 import { Link, useLocation } from "wouter";
-import { Search, Activity, Briefcase, BarChart2, Shield, Star, Menu } from "lucide-react";
+import { Search, Activity, Briefcase, BarChart2, Shield, Bell, Star, Menu } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 
@@ -18,6 +18,7 @@ export function Layout({ children, noPadding = false }: LayoutProps) {
     { name: "Portfolio",     href: "/portfolio",    icon: Briefcase },
     { name: "Analytics",     href: "/analytics",    icon: BarChart2 },
     { name: "Brand Checker", href: "/brand-checker",icon: Shield },
+    { name: "Alerts",        href: "/alerts",        icon: Bell },
   ];
 
   const NavLinks = ({ onClick }: { onClick?: () => void }) => (

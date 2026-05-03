@@ -4,6 +4,7 @@ import {
   timestamp,
   doublePrecision,
   integer,
+  boolean,
   pgEnum,
   uniqueIndex,
 } from "drizzle-orm/pg-core";
@@ -86,9 +87,24 @@ export const watchlistTable = pgTable(
   (t) => [uniqueIndex("watchlist_user_domain_idx").on(t.userId, t.domainId)],
 );
 
+export const alertsTable = pgTable("alerts", {
+  id: text("id").primaryKey(),
+  userId: text("user_id")
+    .notNull()
+    .references(() => usersTable.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  email: text("email").notNull(),
+  filterJson: text("filter_json").notNull().default("{}"),
+  active: boolean("active").notNull().default(true),
+  lastSentAt: timestamp("last_sent_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
 export const insertDomainSchema = createInsertSchema(domainsTable);
 export type InsertDomain = z.infer<typeof insertDomainSchema>;
 export type Domain = typeof domainsTable.$inferSelect;
 export type Metrics = typeof metricsTable.$inferSelect;
 export type WatchlistItem = typeof watchlistTable.$inferSelect;
 export type User = typeof usersTable.$inferSelect;
+export type Alert = typeof alertsTable.$inferSelect;

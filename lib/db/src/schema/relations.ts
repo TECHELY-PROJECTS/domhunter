@@ -1,5 +1,5 @@
 import { relations } from "drizzle-orm";
-import { domainsTable, metricsTable, watchlistTable, usersTable } from "./domains";
+import { domainsTable, metricsTable, watchlistTable, usersTable, alertsTable } from "./domains";
 
 export const domainsRelations = relations(domainsTable, ({ one, many }) => ({
   metrics: one(metricsTable, {
@@ -29,4 +29,12 @@ export const watchlistRelations = relations(watchlistTable, ({ one }) => ({
 
 export const usersRelations = relations(usersTable, ({ many }) => ({
   watchlist: many(watchlistTable),
+  alerts: many(alertsTable),
+}));
+
+export const alertsRelations = relations(alertsTable, ({ one }) => ({
+  user: one(usersTable, {
+    fields: [alertsTable.userId],
+    references: [usersTable.id],
+  }),
 }));
