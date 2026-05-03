@@ -4,7 +4,12 @@ import { Search, Activity, Briefcase, BarChart2, Star, Menu, Shield } from "luci
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 
-export function Layout({ children }: { children: ReactNode }) {
+interface LayoutProps {
+  children: ReactNode;
+  noPadding?: boolean;
+}
+
+export function Layout({ children, noPadding = false }: LayoutProps) {
   const [location] = useLocation();
 
   const navigation = [
@@ -17,7 +22,7 @@ export function Layout({ children }: { children: ReactNode }) {
 
   return (
     <div className="min-h-screen bg-background text-foreground flex flex-col md:flex-row">
-      <div className="hidden md:flex flex-col w-64 border-r border-border bg-card">
+      <div className="hidden md:flex flex-col w-64 border-r border-border bg-card shrink-0">
         <div className="p-4 border-b border-border flex items-center gap-2">
           <Star className="text-primary w-6 h-6" />
           <span className="font-bold text-xl tracking-tight uppercase">DomHunter</span>
@@ -45,7 +50,7 @@ export function Layout({ children }: { children: ReactNode }) {
       </div>
 
       {/* Mobile Nav */}
-      <div className="md:hidden border-b border-border bg-card p-4 flex items-center justify-between">
+      <div className="md:hidden border-b border-border bg-card p-4 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-2">
           <Star className="text-primary w-6 h-6" />
           <span className="font-bold text-lg tracking-tight uppercase">DomHunter</span>
@@ -84,10 +89,16 @@ export function Layout({ children }: { children: ReactNode }) {
         </Sheet>
       </div>
 
-      <main className="flex-1 overflow-auto">
-        <div className="container mx-auto p-4 md:p-8 max-w-7xl">
-          {children}
-        </div>
+      <main className="flex-1 overflow-hidden flex flex-col">
+        {noPadding ? (
+          children
+        ) : (
+          <div className="flex-1 overflow-auto">
+            <div className="container mx-auto p-4 md:p-8 max-w-7xl">
+              {children}
+            </div>
+          </div>
+        )}
       </main>
     </div>
   );

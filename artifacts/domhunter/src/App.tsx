@@ -21,17 +21,25 @@ const queryClient = new QueryClient({
 
 function Router() {
   return (
-    <Layout>
-      <Switch>
-        <Route path="/" component={Home} />
-        <Route path="/explore" component={Explore} />
-        <Route path="/domain/:fqdn" component={DomainDetail} />
-        <Route path="/portfolio" component={Portfolio} />
-        <Route path="/analytics" component={Analytics} />
-        <Route path="/brand-checker" component={BrandChecker} />
-        <Route component={NotFound} />
-      </Switch>
-    </Layout>
+    <Switch>
+      <Route path="/explore">
+        <Layout noPadding>
+          <Explore />
+        </Layout>
+      </Route>
+      <Route>
+        <Layout>
+          <Switch>
+            <Route path="/" component={Home} />
+            <Route path="/domain/:fqdn" component={DomainDetail} />
+            <Route path="/portfolio" component={Portfolio} />
+            <Route path="/analytics" component={Analytics} />
+            <Route path="/brand-checker" component={BrandChecker} />
+            <Route component={NotFound} />
+          </Switch>
+        </Layout>
+      </Route>
+    </Switch>
   );
 }
 

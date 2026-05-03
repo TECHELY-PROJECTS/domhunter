@@ -183,6 +183,14 @@ export type ListDomainsParams = {
   minDA?: number;
   recommendation?: ListDomainsRecommendation;
   niche?: string;
+  minBrandScore?: number;
+  minAge?: number;
+  minBacklinks?: number;
+  tier?: string;
+  /**
+   * Comma-separated list of TLDs to filter by
+   */
+  tlds?: string;
   sortBy?: ListDomainsSortBy;
   sortDir?: ListDomainsSortDir;
 };
@@ -215,6 +223,9 @@ export const ListDomainsSortBy = {
   rarityScore: "rarityScore",
   brandScore: "brandScore",
   domainAuthority: "domainAuthority",
+  estimatedValue: "estimatedValue",
+  backlinks: "backlinks",
+  domainAge: "domainAge",
   createdAt: "createdAt",
   auctionEndAt: "auctionEndAt",
   currentBid: "currentBid",

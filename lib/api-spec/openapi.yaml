@@ -86,11 +86,32 @@ paths:
           in: query
           schema:
             type: string
+        - name: minBrandScore
+          in: query
+          schema:
+            type: number
+        - name: minAge
+          in: query
+          schema:
+            type: number
+        - name: minBacklinks
+          in: query
+          schema:
+            type: number
+        - name: tier
+          in: query
+          schema:
+            type: string
+        - name: tlds
+          in: query
+          description: Comma-separated list of TLDs to filter by
+          schema:
+            type: string
         - name: sortBy
           in: query
           schema:
             type: string
-            enum: [rarityScore, brandScore, domainAuthority, createdAt, auctionEndAt, currentBid]
+            enum: [rarityScore, brandScore, domainAuthority, estimatedValue, backlinks, domainAge, createdAt, auctionEndAt, currentBid]
             default: rarityScore
         - name: sortDir
           in: query

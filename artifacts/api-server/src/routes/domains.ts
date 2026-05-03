@@ -1,7 +1,7 @@
 import { Router, type IRouter } from "express";
 import { db } from "@workspace/db";
 import { domainsTable, metricsTable, watchlistTable } from "@workspace/db";
-import { eq, sql, desc, asc, and, gte, lte, ilike } from "drizzle-orm";
+import { eq, sql, desc, asc, and, gte, lte, ilike, inArray } from "drizzle-orm";
 import {
   ListDomainsQueryParams,
   GetDomainParams,
@@ -205,11 +205,32 @@ router.get("/domains", async (req, res) => {
     if (params.minDA != null) {
       conditions.push(gte(metricsTable.domainAuthority, params.minDA) as ReturnType<typeof eq>);
     }
+    if (params.minBrandScore != null) {
+      conditions.push(gte(metricsTable.brandScore, params.minBrandScore) as ReturnType<typeof eq>);
+    }
+    if (params.minAge != null) {
+      conditions.push(gte(metricsTable.domainAge, params.minAge) as ReturnType<typeof eq>);
+    }
+    if (params.minBacklinks != null) {
+      conditions.push(gte(metricsTable.backlinks, params.minBacklinks) as ReturnType<typeof eq>);
+    }
+    if (params.tier) {
+      conditions.push(eq(metricsTable.rarityTier, params.tier) as ReturnType<typeof eq>);
+    }
+    if (params.tlds) {
+      const tldList = params.tlds.split(",").map((t: string) => t.trim()).filter(Boolean);
+      if (tldList.length > 0) {
+        conditions.push(inArray(domainsTable.tld, tldList) as ReturnType<typeof eq>);
+      }
+    }
 
     const sortMap: Record<string, unknown> = {
       rarityScore: metricsTable.rarityScore,
       brandScore: metricsTable.brandScore,
+      estimatedValue: metricsTable.estimatedValue,
       domainAuthority: metricsTable.domainAuthority,
+      backlinks: metricsTable.backlinks,
+      domainAge: metricsTable.domainAge,
       createdAt: domainsTable.createdAt,
       auctionEndAt: domainsTable.auctionEndAt,
       currentBid: domainsTable.currentBid,

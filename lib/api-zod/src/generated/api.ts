@@ -36,11 +36,22 @@ export const ListDomainsQueryParams = zod.object({
   minDA: zod.coerce.number().optional(),
   recommendation: zod.enum(["BUY", "WATCH", "SKIP"]).optional(),
   niche: zod.coerce.string().optional(),
+  minBrandScore: zod.coerce.number().optional(),
+  minAge: zod.coerce.number().optional(),
+  minBacklinks: zod.coerce.number().optional(),
+  tier: zod.coerce.string().optional(),
+  tlds: zod.coerce
+    .string()
+    .optional()
+    .describe("Comma-separated list of TLDs to filter by"),
   sortBy: zod
     .enum([
       "rarityScore",
       "brandScore",
       "domainAuthority",
+      "estimatedValue",
+      "backlinks",
+      "domainAge",
       "createdAt",
       "auctionEndAt",
       "currentBid",
