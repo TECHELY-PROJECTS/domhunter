@@ -11,9 +11,8 @@ import {
 import { useQueryClient, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { ExternalLink, Star, Zap, RefreshCw } from "lucide-react";
+import { ExternalLink, Star, Zap, RefreshCw, Archive } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 interface EnrichResult {
@@ -64,19 +63,87 @@ function useEnrichDomain(fqdn: string) {
   });
 }
 
-const TIER_COLORS: Record<string, string> = {
-  legendary: "text-yellow-400",
-  epic: "text-purple-400",
-  rare: "text-blue-400",
-  uncommon: "text-green-400",
-  common: "text-muted-foreground",
+const TIER_BADGE: Record<string, string> = {
+  legendary: "bg-yellow-400 text-yellow-900 border-yellow-500 font-bold",
+  epic:      "bg-purple-600 text-white border-purple-700",
+  rare:      "bg-blue-600 text-white border-blue-700",
+  uncommon:  "bg-green-700 text-white border-green-800",
+  common:    "bg-muted text-muted-foreground border-border",
 };
 
-const REC_STYLES: Record<string, string> = {
-  BUY: "bg-green-500/20 text-green-400 border-green-500/40",
-  WATCH: "bg-amber-500/20 text-amber-400 border-amber-500/40",
-  SKIP: "bg-red-500/20 text-red-400 border-red-500/40",
+const REC_BADGE: Record<string, string> = {
+  BUY:   "bg-green-900/60 text-green-300 border-green-700 font-bold",
+  WATCH: "bg-yellow-900/60 text-yellow-300 border-yellow-700",
+  SKIP:  "bg-muted text-muted-foreground border-border",
 };
+
+const REC_EMOJI: Record<string, string> = {
+  BUY: "🔥", WATCH: "👀", SKIP: "⏭",
+};
+
+const REGISTRAR_LINKS = (name: string) => [
+  { label: "GoDaddy",   url: `https://www.godaddy.com/domainsearch/find?checkAvail=1&domainToCheck=${name}`, cls: "bg-green-700 hover:bg-green-600" },
+  { label: "Namecheap", url: `https://www.namecheap.com/domains/registration/results/?domain=${name}`,      cls: "bg-orange-600 hover:bg-orange-500" },
+  { label: "Afternic",  url: `https://www.afternic.com/domain/${name}`,                                     cls: "bg-blue-700 hover:bg-blue-600" },
+  { label: "Dan.com",   url: `https://dan.com/search?name=${name}`,                                         cls: "bg-purple-700 hover:bg-purple-600" },
+  { label: "Sedo",      url: `https://sedo.com/search/?keyword=${name}`,                                    cls: "bg-zinc-700 hover:bg-zinc-600" },
+];
+
+function ScoreBar({ label, value, color }: { label: string; value?: number | null; color: string }) {
+  const pct = Math.min(100, Math.max(0, value ?? 0));
+  return (
+    <div className="mb-4">
+      <div className="flex justify-between text-sm mb-1.5">
+        <span className="text-muted-foreground font-medium">{label}</span>
+        <span className="font-bold text-foreground tabular-nums">
+          {value != null ? `${Math.round(value)}/100` : "—"}
+        </span>
+      </div>
+      <div className="h-2.5 bg-secondary rounded-full overflow-hidden">
+        <div
+          className={`h-full ${color} rounded-full transition-all duration-700`}
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+
+function StatBox({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="text-center bg-muted/50 rounded-lg px-4 py-3 border border-border min-w-[90px]">
+      <div className="text-2xl font-bold text-foreground font-mono">{value}</div>
+      <div className="text-xs text-muted-foreground mt-0.5">{label}</div>
+    </div>
+  );
+}
+
+function DetailRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex justify-between items-center py-2 border-b border-border/40 last:border-0">
+      <span className="text-muted-foreground text-sm">{label}</span>
+      <span className="font-mono font-medium text-right text-sm capitalize">{value}</span>
+    </div>
+  );
+}
+
+function EnrichRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex justify-between items-center py-1">
+      <span className="text-muted-foreground text-sm">{label}</span>
+      <span className="font-mono font-medium text-sm">{value}</span>
+    </div>
+  );
+}
+
+function EnrichStat({ label, value, highlight }: { label: string; value: string; highlight?: boolean }) {
+  return (
+    <div className={`rounded-lg p-3 border ${highlight ? "border-primary/40 bg-primary/10" : "border-border bg-card"}`}>
+      <p className="text-xs text-muted-foreground">{label}</p>
+      <p className={`font-mono font-bold text-sm mt-0.5 ${highlight ? "text-primary" : ""}`}>{value}</p>
+    </div>
+  );
+}
 
 export default function DomainDetail() {
   const { fqdn } = useParams();
@@ -103,26 +170,20 @@ export default function DomainDetail() {
     if (isWatched) {
       const item = watchlist?.find((w) => w.domain.name === fqdn);
       if (item) {
-        removeWatchlist.mutate(
-          { id: item.id },
-          {
-            onSuccess: () => {
-              queryClient.invalidateQueries({ queryKey: getGetWatchlistQueryKey() });
-              toast({ title: "Removed from watchlist" });
-            },
-          },
-        );
-      }
-    } else {
-      addWatchlist.mutate(
-        { data: { domainId: domain.id } },
-        {
+        removeWatchlist.mutate({ id: item.id }, {
           onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: getGetWatchlistQueryKey() });
-            toast({ title: "Added to watchlist" });
+            toast({ title: "Removed from watchlist" });
           },
+        });
+      }
+    } else {
+      addWatchlist.mutate({ data: { domainId: domain.id } }, {
+        onSuccess: () => {
+          queryClient.invalidateQueries({ queryKey: getGetWatchlistQueryKey() });
+          toast({ title: "Added to watchlist" });
         },
-      );
+      });
     }
   };
 
@@ -130,93 +191,108 @@ export default function DomainDetail() {
     enrich.mutate(undefined, {
       onSuccess: (result) => {
         setEnrichResult(result);
-        queryClient.invalidateQueries({
-          queryKey: getGetDomainQueryKey(fqdn || ""),
-        });
-        toast({
-          title: "Enrichment complete",
-          description: `RDAP, OPR, and backlink data fetched. Score updated.`,
-        });
+        queryClient.invalidateQueries({ queryKey: getGetDomainQueryKey(fqdn || "") });
+        toast({ title: "Enrichment complete", description: "RDAP, OPR, and backlink data fetched." });
       },
       onError: (err) => {
-        toast({
-          title: "Enrichment failed",
-          description: err.message,
-          variant: "destructive",
-        });
+        toast({ title: "Enrichment failed", description: err.message, variant: "destructive" });
       },
     });
   };
 
   if (isLoading) {
     return (
-      <div className="space-y-6">
-        <Skeleton className="h-28 w-full" />
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          {[...Array(4)].map((_, i) => <Skeleton key={i} className="h-32 w-full" />)}
-        </div>
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="space-y-6 max-w-5xl mx-auto">
+        <Skeleton className="h-36 w-full" />
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <Skeleton className="h-64 w-full" />
           <Skeleton className="h-64 w-full" />
         </div>
+        <Skeleton className="h-32 w-full" />
       </div>
     );
   }
 
   if (!domain) {
     return (
-      <div className="text-center p-16 text-muted-foreground">
-        Domain not found.
-      </div>
+      <div className="text-center p-16 text-muted-foreground">Domain not found.</div>
     );
   }
 
   const m = domain.metrics;
-  const tier = m?.rarityTier ?? "common";
-  const rec = m?.recommendation ?? "";
+  const hasAuction = !!(domain.auctionEndAt || domain.currentBid);
+
+  const formatValue = (v?: number | null) => {
+    if (!v) return null;
+    return v >= 1000 ? `$${(v / 1000).toFixed(1)}K` : `$${v}`;
+  };
 
   return (
-    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-      {/* Header */}
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-card p-6 rounded-xl border border-border">
-        <div>
-          <div className="flex flex-wrap items-center gap-3">
+    <div className="space-y-6 max-w-5xl mx-auto animate-in fade-in slide-in-from-bottom-4 duration-500">
+
+      {/* ── HEADER ── */}
+      <div className="bg-card rounded-xl border border-border p-6">
+        <div className="flex items-start justify-between flex-wrap gap-6">
+          <div className="flex-1 min-w-0">
             <h1
-              className="text-3xl font-bold tracking-tight font-mono"
+              className="text-3xl md:text-4xl font-mono font-bold text-foreground mb-3 break-all"
               data-testid="text-domain-name"
             >
               {domain.name}
             </h1>
-            <Badge variant="outline" className="uppercase text-xs">
-              {domain.status}
-            </Badge>
-            {tier && (
-              <span
-                className={`text-xs font-semibold uppercase tracking-widest ${TIER_COLORS[tier] ?? "text-muted-foreground"}`}
-                data-testid="text-rarity-tier"
-              >
-                {tier}
+            <div className="flex items-center gap-2 flex-wrap">
+              {m?.rarityTier && (
+                <span
+                  className={`text-xs px-3 py-1 rounded-full border capitalize font-medium ${TIER_BADGE[m.rarityTier] ?? TIER_BADGE.common}`}
+                  data-testid="text-rarity-tier"
+                >
+                  {m.rarityTier}
+                </span>
+              )}
+              {m?.recommendation && (
+                <span
+                  className={`text-xs px-3 py-1 rounded-full border font-medium ${REC_BADGE[m.recommendation] ?? ""}`}
+                  data-testid="badge-recommendation"
+                >
+                  {REC_EMOJI[m.recommendation]} {m.recommendation}
+                </span>
+              )}
+              <span className={`text-xs px-3 py-1 rounded-full border ${
+                domain.status === "AVAILABLE" ? "bg-green-900/40 text-green-300 border-green-700" :
+                domain.status === "EXPIRING"  ? "bg-orange-900/40 text-orange-300 border-orange-700" :
+                domain.status === "AUCTION"   ? "bg-yellow-900/40 text-yellow-300 border-yellow-700" :
+                "bg-muted text-muted-foreground border-border"
+              }`}>
+                {domain.status}
               </span>
-            )}
-            {rec && (
-              <span
-                className={`text-xs font-bold px-2 py-0.5 rounded border ${REC_STYLES[rec] ?? ""}`}
-                data-testid="badge-recommendation"
-              >
-                {rec}
-              </span>
+            </div>
+            {m?.aiReason && (
+              <p className="mt-3 text-muted-foreground italic text-sm max-w-xl">
+                "{m.aiReason}"
+              </p>
             )}
           </div>
-          <p className="text-muted-foreground mt-2 text-sm max-w-xl">
-            {m?.aiReason || "No AI analysis available yet. Click Enrich to fetch live data."}
-          </p>
+
+          {/* Key stat boxes */}
+          <div className="flex gap-3 flex-wrap">
+            {m?.rarityScore != null && (
+              <StatBox label="Rarity Score" value={`${Math.round(m.rarityScore)}/100`} />
+            )}
+            {m?.brandScore != null && (
+              <StatBox label="Brand Score" value={`${Math.round(m.brandScore)}/100`} />
+            )}
+            {formatValue(m?.estimatedValue) && (
+              <StatBox label="Est. Value" value={formatValue(m?.estimatedValue)!} />
+            )}
+          </div>
         </div>
 
-        <div className="flex items-center gap-2 flex-wrap">
+        {/* Action buttons */}
+        <div className="flex items-center gap-2 flex-wrap mt-5 pt-5 border-t border-border">
           {domain.auctionUrl && (
             <a href={domain.auctionUrl} target="_blank" rel="noopener noreferrer">
               <Button variant="outline" size="sm" className="gap-2" data-testid="button-view-auction">
-                Auction <ExternalLink className="w-3.5 h-3.5" />
+                View Auction <ExternalLink className="w-3.5 h-3.5" />
               </Button>
             </a>
           )}
@@ -228,11 +304,7 @@ export default function DomainDetail() {
             className="gap-2"
             data-testid="button-enrich"
           >
-            {enrich.isPending ? (
-              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-            ) : (
-              <Zap className="w-3.5 h-3.5" />
-            )}
+            {enrich.isPending ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5" />}
             {enrich.isPending ? "Enriching..." : "Enrich"}
           </Button>
           <Button
@@ -249,93 +321,118 @@ export default function DomainDetail() {
         </div>
       </div>
 
-      {/* Score cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <ScoreCard title="Rarity Score" value={m?.rarityScore} />
-        <ScoreCard title="Brand Score" value={m?.brandScore} />
-        <ScoreCard title="Domain Authority" value={m?.domainAuthority} />
-        <ScoreCard title="Trend Score" value={m?.trendScore} />
-      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
 
-      {/* Sub-score breakdown */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm uppercase tracking-widest text-muted-foreground">
-            Score Breakdown
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <SubScore label="Length" value={m?.lengthScore} weight="25%" />
-            <SubScore label="Pronounce" value={m?.pronounceScore} weight="35%" />
-            <SubScore label="TLD" value={m?.tldScore} weight="20%" />
-            <SubScore label="Keyword" value={m?.keywordScore} weight="20%" />
-          </div>
-          {enrichResult && (
-            <div className="mt-4 pt-4 border-t border-border/50 grid grid-cols-2 md:grid-cols-3 gap-3 text-xs">
-              <EnrichStat label="SEO Bonus" value={`+${enrichResult.enriched.scoring.seoBonus.toFixed(1)} pts`} />
-              <EnrichStat label="Trend Bonus" value={`+${enrichResult.enriched.scoring.trendBonus.toFixed(1)} pts`} />
-              <EnrichStat label="Composite Total" value={`${enrichResult.enriched.scoring.total} / 100`} highlight />
+        {/* ── SCORE BREAKDOWN ── */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Score Breakdown</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ScoreBar label="Pronounceability" value={m?.pronounceScore}  color="bg-purple-500" />
+            <ScoreBar label="Length"           value={m?.lengthScore}     color="bg-blue-500" />
+            <ScoreBar label="TLD Value"        value={m?.tldScore}        color="bg-green-500" />
+            <ScoreBar label="Keyword Value"    value={m?.keywordScore}    color="bg-orange-500" />
+            <div className="pt-3 border-t border-border/40 flex justify-between text-sm">
+              <span className="text-muted-foreground font-medium">Total Rarity Score</span>
+              <span className="font-bold text-foreground text-base">
+                {m?.rarityScore != null ? `${Math.round(m.rarityScore)}/100` : "—"}
+              </span>
             </div>
-          )}
-        </CardContent>
-      </Card>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Domain details */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Domain Details</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-1">
-            <DetailRow label="Registrar" value={m?.registrar || "-"} />
-            <DetailRow
-              label="Domain Age"
-              value={m?.domainAge != null ? `${m.domainAge} years` : "-"}
-            />
-            <DetailRow
-              label="Backlinks"
-              value={m?.backlinks != null ? m.backlinks.toLocaleString() : "-"}
-            />
-            <DetailRow
-              label="Referring Domains"
-              value={m?.referringDomains != null ? m.referringDomains.toLocaleString() : "-"}
-            />
-            <DetailRow label="Niche" value={m?.niche || "-"} />
-            <DetailRow label="Source" value={domain.source || "-"} />
-            <DetailRow label="TLD" value={`.${domain.tld}`} />
-            <DetailRow label="SLD" value={domain.sld} />
+            {enrichResult && (
+              <div className="mt-4 pt-4 border-t border-border/40 grid grid-cols-3 gap-2">
+                <EnrichStat label="SEO Bonus"      value={`+${enrichResult.enriched.scoring.seoBonus.toFixed(1)} pts`} />
+                <EnrichStat label="Trend Bonus"    value={`+${enrichResult.enriched.scoring.trendBonus.toFixed(1)} pts`} />
+                <EnrichStat label="Composite"      value={`${enrichResult.enriched.scoring.total}/100`} highlight />
+              </div>
+            )}
           </CardContent>
         </Card>
 
-        {/* Auction + valuation */}
+        {/* ── DOMAIN INFO ── */}
         <Card>
           <CardHeader>
-            <CardTitle>Valuation &amp; Auction</CardTitle>
+            <CardTitle className="text-base">Domain Info</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-1">
-            <DetailRow
-              label="Current Bid"
-              value={domain.currentBid ? `$${domain.currentBid.toLocaleString()}` : "-"}
-            />
-            <DetailRow
-              label="Estimated Value"
-              value={m?.estimatedValue ? `$${m.estimatedValue.toLocaleString()}` : "-"}
-            />
-            <DetailRow label="Bid Count" value={domain.bidCount?.toString() || "-"} />
-            <DetailRow
-              label="Auction Ends"
-              value={
-                domain.auctionEndAt
-                  ? new Date(domain.auctionEndAt).toLocaleString()
-                  : "-"
-              }
-            />
+          <CardContent>
+            {[
+              { label: "Extension",          value: `.${domain.tld}` },
+              { label: "Domain Age",         value: m?.domainAge != null ? `${m.domainAge} years` : null },
+              { label: "Registrar",          value: m?.registrar },
+              { label: "Domain Authority",   value: m?.domainAuthority != null ? `${Math.round(m.domainAuthority)}/100` : null },
+              { label: "Backlinks",          value: m?.backlinks != null ? m.backlinks.toLocaleString() : null },
+              { label: "Referring Domains",  value: m?.referringDomains != null ? m.referringDomains.toLocaleString() : null },
+              { label: "Niche",              value: m?.niche ? m.niche.charAt(0).toUpperCase() + m.niche.slice(1) : null },
+              { label: "Target Buyer",       value: m?.targetBuyer },
+              { label: "Source",             value: domain.source },
+            ].filter(r => r.value).map(r => (
+              <DetailRow key={r.label} label={r.label} value={String(r.value)} />
+            ))}
+          </CardContent>
+        </Card>
+
+        {/* ── AUCTION CARD (only when active) ── */}
+        {hasAuction && (
+          <Card className="border-orange-700/50 bg-orange-900/10">
+            <CardHeader>
+              <CardTitle className="text-base text-orange-300">⏰ Auction Active</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2 text-sm">
+              {domain.currentBid != null && (
+                <div className="flex justify-between">
+                  <span className="text-orange-300/70">Current Bid</span>
+                  <span className="font-bold text-orange-200">${domain.currentBid.toLocaleString()}</span>
+                </div>
+              )}
+              {domain.bidCount != null && (
+                <div className="flex justify-between">
+                  <span className="text-orange-300/70">Bids</span>
+                  <span className="font-medium text-orange-200">{domain.bidCount}</span>
+                </div>
+              )}
+              {domain.auctionEndAt && (
+                <div className="flex justify-between">
+                  <span className="text-orange-300/70">Ends</span>
+                  <span className="font-bold text-red-400">{new Date(domain.auctionEndAt).toLocaleString()}</span>
+                </div>
+              )}
+              {domain.auctionUrl && (
+                <a
+                  href={domain.auctionUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="block text-center mt-3 bg-orange-600 text-white rounded py-2 text-sm font-medium hover:bg-orange-500 transition-colors"
+                >
+                  View Auction →
+                </a>
+              )}
+            </CardContent>
+          </Card>
+        )}
+
+        {/* ── REGISTER / BUY LINKS ── */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Register or Buy</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {REGISTRAR_LINKS(domain.name).map(link => (
+              <a
+                key={link.label}
+                href={link.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={`flex items-center justify-between w-full px-4 py-2.5 text-sm text-white rounded-lg font-medium transition-colors ${link.cls}`}
+              >
+                {link.label}
+                <span>→</span>
+              </a>
+            ))}
           </CardContent>
         </Card>
       </div>
 
-      {/* Enrichment result panel */}
+      {/* ── LIVE ENRICHMENT RESULTS ── */}
       {enrichResult && (
         <Card className="border-primary/40 bg-primary/5">
           <CardHeader>
@@ -347,177 +444,65 @@ export default function DomainDetail() {
           <CardContent>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-sm">
               <div>
-                <p className="text-xs uppercase tracking-widest text-muted-foreground mb-3">
-                  RDAP / WHOIS
-                </p>
-                <div className="space-y-2">
+                <p className="text-xs uppercase tracking-widest text-muted-foreground mb-3">RDAP / WHOIS</p>
+                <div className="space-y-1">
                   <EnrichRow label="Available" value={enrichResult.enriched.rdap.available ? "Yes" : "No"} />
-                  <EnrichRow label="Registrar" value={enrichResult.enriched.rdap.registrar || "-"} />
-                  <EnrichRow label="Age" value={enrichResult.enriched.rdap.ageYears != null ? `${enrichResult.enriched.rdap.ageYears} years` : "-"} />
-                  <EnrichRow
-                    label="Created"
-                    value={
-                      enrichResult.enriched.rdap.createdDate
-                        ? new Date(enrichResult.enriched.rdap.createdDate).toLocaleDateString()
-                        : "-"
-                    }
-                  />
-                  <EnrichRow
-                    label="Expires"
-                    value={
-                      enrichResult.enriched.rdap.expiresDate
-                        ? new Date(enrichResult.enriched.rdap.expiresDate).toLocaleDateString()
-                        : "-"
-                    }
-                  />
+                  <EnrichRow label="Registrar" value={enrichResult.enriched.rdap.registrar || "—"} />
+                  <EnrichRow label="Age"       value={enrichResult.enriched.rdap.ageYears != null ? `${enrichResult.enriched.rdap.ageYears} years` : "—"} />
+                  <EnrichRow label="Created"   value={enrichResult.enriched.rdap.createdDate ? new Date(enrichResult.enriched.rdap.createdDate).toLocaleDateString() : "—"} />
+                  <EnrichRow label="Expires"   value={enrichResult.enriched.rdap.expiresDate ? new Date(enrichResult.enriched.rdap.expiresDate).toLocaleDateString() : "—"} />
                 </div>
               </div>
-
               <div>
-                <p className="text-xs uppercase tracking-widest text-muted-foreground mb-3">
-                  OpenPageRank
-                </p>
+                <p className="text-xs uppercase tracking-widest text-muted-foreground mb-3">OpenPageRank</p>
                 {enrichResult.enriched.opr ? (
-                  <div className="space-y-2">
-                    <EnrichRow label="Page Rank" value={`${enrichResult.enriched.opr.rank} / 10`} />
-                    <EnrichRow label="DA (converted)" value={`${enrichResult.enriched.opr.da} / 100`} />
+                  <div className="space-y-1">
+                    <EnrichRow label="Page Rank"     value={`${enrichResult.enriched.opr.rank}/10`} />
+                    <EnrichRow label="DA (converted)" value={`${enrichResult.enriched.opr.da}/100`} />
                   </div>
                 ) : (
                   <p className="text-muted-foreground text-xs">
-                    No data. Set{" "}
-                    <code className="bg-muted px-1 rounded">OPENPAGERANK_API_KEY</code>{" "}
-                    to enable.
+                    No data. Set <code className="bg-muted px-1 rounded">OPENPAGERANK_API_KEY</code> to enable.
                   </p>
                 )}
               </div>
-
               <div>
-                <p className="text-xs uppercase tracking-widest text-muted-foreground mb-3">
-                  Backlinks
-                </p>
+                <p className="text-xs uppercase tracking-widest text-muted-foreground mb-3">Backlinks</p>
                 {enrichResult.enriched.backlinks ? (
-                  <div className="space-y-2">
-                    <EnrichRow label="Total Links" value={enrichResult.enriched.backlinks.totalLinks.toLocaleString()} />
+                  <div className="space-y-1">
+                    <EnrichRow label="Total Links"       value={enrichResult.enriched.backlinks.totalLinks.toLocaleString()} />
                     <EnrichRow label="Referring Domains" value={enrichResult.enriched.backlinks.referringDomains.toLocaleString()} />
                   </div>
                 ) : (
-                  <p className="text-muted-foreground text-xs">
-                    No data returned from OpenLinkProfiler.
-                  </p>
+                  <p className="text-muted-foreground text-xs">No data returned from OpenLinkProfiler.</p>
                 )}
               </div>
             </div>
           </CardContent>
         </Card>
       )}
-    </div>
-  );
-}
 
-function ScoreCard({ title, value }: { title: string; value?: number | null }) {
-  const pct = value != null ? Math.min(100, Math.max(0, value)) : 0;
-  const color =
-    pct >= 80
-      ? "bg-green-500"
-      : pct >= 60
-        ? "bg-primary"
-        : pct >= 40
-          ? "bg-amber-500"
-          : "bg-red-500";
+      {/* ── WAYBACK MACHINE ── */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base flex items-center gap-2">
+            <Archive className="w-4 h-4 text-muted-foreground" />
+            Wayback Machine History
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-sm text-muted-foreground mb-3">Check what this domain was previously used for:</p>
+          <a
+            href={`https://web.archive.org/web/*/${domain.name}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-2 text-sm text-primary hover:underline"
+          >
+            View archive history for {domain.name} <ExternalLink className="w-3.5 h-3.5" />
+          </a>
+        </CardContent>
+      </Card>
 
-  return (
-    <Card data-testid={`card-score-${title.toLowerCase().replace(/\s/g, "-")}`}>
-      <CardContent className="p-5">
-        <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-          {title}
-        </p>
-        <div className="mt-3 flex items-end gap-1">
-          <span className="text-3xl font-bold font-mono">
-            {value != null ? Math.round(value) : "-"}
-          </span>
-          {value != null && (
-            <span className="text-xs text-muted-foreground mb-1">/ 100</span>
-          )}
-        </div>
-        <div className="h-1.5 w-full bg-secondary rounded-full mt-3 overflow-hidden">
-          <div
-            className={`h-full ${color} transition-all duration-1000 ease-out rounded-full`}
-            style={{ width: `${pct}%` }}
-          />
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-function SubScore({
-  label,
-  value,
-  weight,
-}: {
-  label: string;
-  value?: number | null;
-  weight: string;
-}) {
-  const pct = value != null ? Math.min(100, Math.max(0, value)) : 0;
-  return (
-    <div className="space-y-1.5">
-      <div className="flex justify-between text-xs">
-        <span className="text-muted-foreground">{label}</span>
-        <span className="text-muted-foreground/60">{weight}</span>
-      </div>
-      <div className="flex items-center gap-2">
-        <div className="flex-1 h-1.5 bg-secondary rounded-full overflow-hidden">
-          <div
-            className="h-full bg-primary/70 rounded-full transition-all duration-1000"
-            style={{ width: `${pct}%` }}
-          />
-        </div>
-        <span className="font-mono text-xs w-7 text-right">
-          {value != null ? Math.round(value) : "-"}
-        </span>
-      </div>
-    </div>
-  );
-}
-
-function DetailRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex justify-between items-center py-2 border-b border-border/40 last:border-0">
-      <span className="text-muted-foreground text-sm">{label}</span>
-      <span className="font-mono font-medium text-right text-sm">{value}</span>
-    </div>
-  );
-}
-
-function EnrichRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex justify-between items-center">
-      <span className="text-muted-foreground">{label}</span>
-      <span className="font-mono font-medium">{value}</span>
-    </div>
-  );
-}
-
-function EnrichStat({
-  label,
-  value,
-  highlight,
-}: {
-  label: string;
-  value: string;
-  highlight?: boolean;
-}) {
-  return (
-    <div
-      className={`rounded-lg p-3 border ${highlight ? "border-primary/40 bg-primary/10" : "border-border bg-card"}`}
-    >
-      <p className="text-xs text-muted-foreground">{label}</p>
-      <p
-        className={`font-mono font-bold text-sm mt-0.5 ${highlight ? "text-primary" : ""}`}
-      >
-        {value}
-      </p>
     </div>
   );
 }
