@@ -93,7 +93,8 @@ export const alertsTable = pgTable("alerts", {
     .notNull()
     .references(() => usersTable.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
-  email: text("email").notNull(),
+  telegramChatId: text("telegram_chat_id").notNull(),
+  telegramBotToken: text("telegram_bot_token").notNull(),
   filterJson: text("filter_json").notNull().default("{}"),
   active: boolean("active").notNull().default(true),
   lastSentAt: timestamp("last_sent_at"),

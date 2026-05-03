@@ -3,20 +3,21 @@ import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDescription } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
-import { Bell, Trash2, Power, Loader2, Plus } from "lucide-react";
+import { Bell, Trash2, Power, Loader2, Plus, Send, ExternalLink, CheckCircle2, XCircle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 
 type Alert = {
   id: string;
   name: string;
-  email: string;
+  telegramChatId: string;
+  telegramBotToken: string;
   filterJson: string;
   active: boolean;
   lastSentAt: string | null;
@@ -33,7 +34,8 @@ type AlertFilter = {
 
 const formSchema = z.object({
   name: z.string().min(1, "Name required").max(100),
-  email: z.string().email("Valid email required"),
+  telegramChatId: z.string().min(1, "Chat ID required"),
+  telegramBotToken: z.string().min(1, "Bot token required"),
   minScore: z.number().min(0).max(100),
   recommendation: z.string().optional(),
   tier: z.string().optional(),
@@ -49,7 +51,8 @@ async function fetchAlerts(): Promise<Alert[]> {
 
 async function createAlert(data: {
   name: string;
-  email: string;
+  telegramChatId: string;
+  telegramBotToken: string;
   filter: AlertFilter;
 }): Promise<Alert> {
   const res = await fetch(`${API_BASE}/alerts`, {
@@ -58,6 +61,15 @@ async function createAlert(data: {
     body: JSON.stringify(data),
   });
   if (!res.ok) throw new Error("Failed to create alert");
+  return res.json();
+}
+
+async function testTelegram(botToken: string, chatId: string): Promise<{ ok: boolean; error?: string }> {
+  const res = await fetch(`${API_BASE}/alerts/test-telegram`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ botToken, chatId }),
+  });
   return res.json();
 }
 
@@ -83,10 +95,10 @@ const TIER_LABELS: Record<string, string> = {
   uncommon: "✓ Uncommon",
 };
 
-const REC_STYLES: Record<string, string> = {
-  BUY: "bg-green-900/40 text-green-300 border border-green-700",
-  WATCH: "bg-yellow-900/40 text-yellow-300 border border-yellow-700",
-};
+function maskToken(token: string) {
+  if (token.length < 10) return "••••••••";
+  return token.slice(0, 6) + "••••••••" + token.slice(-4);
+}
 
 function AlertCard({ alert, onToggle, onDelete }: {
   alert: Alert;
@@ -107,7 +119,7 @@ function AlertCard({ alert, onToggle, onDelete }: {
     <Card className={`transition-all ${!alert.active ? "opacity-50" : ""}`}>
       <CardContent className="pt-5">
         <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
+          <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2 mb-1">
               <span className="font-semibold truncate">{alert.name}</span>
               {alert.active ? (
@@ -116,7 +128,13 @@ function AlertCard({ alert, onToggle, onDelete }: {
                 <span className="text-xs bg-muted text-muted-foreground border border-border px-1.5 py-0.5 rounded">Paused</span>
               )}
             </div>
-            <p className="text-xs text-muted-foreground mb-3">{alert.email}</p>
+
+            <div className="flex items-center gap-1.5 mb-3">
+              <Send className="w-3 h-3 text-blue-400 shrink-0" />
+              <span className="text-xs text-muted-foreground font-mono">
+                Chat: {alert.telegramChatId} · Token: {maskToken(alert.telegramBotToken)}
+              </span>
+            </div>
 
             {filterChips.length > 0 && (
               <div className="flex flex-wrap gap-1.5 mb-3">
@@ -159,6 +177,8 @@ function AlertCard({ alert, onToggle, onDelete }: {
 
 export default function Alerts() {
   const [showForm, setShowForm] = useState(false);
+  const [testStatus, setTestStatus] = useState<"idle" | "loading" | "ok" | "error">("idle");
+  const [testError, setTestError] = useState("");
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -171,9 +191,10 @@ export default function Alerts() {
     mutationFn: createAlert,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["alerts"] });
-      toast({ title: "Alert created", description: "You'll get an email when matching domains appear." });
+      toast({ title: "Alert created", description: "You'll get a Telegram message when matching domains appear." });
       setShowForm(false);
       form.reset();
+      setTestStatus("idle");
     },
     onError: () => toast({ title: "Failed to create alert", variant: "destructive" }),
   });
@@ -195,14 +216,37 @@ export default function Alerts() {
 
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
-    defaultValues: { name: "", email: "", minScore: 60, recommendation: "", tier: "" },
+    defaultValues: { name: "", telegramChatId: "", telegramBotToken: "", minScore: 60, recommendation: "", tier: "" },
   });
+
+  const onTest = async () => {
+    const botToken = form.getValues("telegramBotToken");
+    const chatId = form.getValues("telegramChatId");
+    if (!botToken || !chatId) {
+      toast({ title: "Enter Bot Token and Chat ID first", variant: "destructive" });
+      return;
+    }
+    setTestStatus("loading");
+    setTestError("");
+    const result = await testTelegram(botToken, chatId);
+    if (result.ok) {
+      setTestStatus("ok");
+    } else {
+      setTestStatus("error");
+      setTestError(result.error ?? "Unknown error");
+    }
+  };
 
   const onSubmit = (values: z.infer<typeof formSchema>) => {
     const filter: AlertFilter = { minScore: values.minScore };
     if (values.recommendation) filter.recommendation = values.recommendation;
     if (values.tier) filter.tier = values.tier;
-    createMut.mutate({ name: values.name, email: values.email, filter });
+    createMut.mutate({
+      name: values.name,
+      telegramChatId: values.telegramChatId,
+      telegramBotToken: values.telegramBotToken,
+      filter,
+    });
   };
 
   return (
@@ -213,23 +257,34 @@ export default function Alerts() {
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Domain Alerts</h1>
           <p className="text-muted-foreground mt-1">
-            Get a daily email digest when new domains match your filters.
+            Get instant Telegram messages when new domains match your filters.
           </p>
         </div>
-        <Button onClick={() => setShowForm((v) => !v)} className="gap-2">
+        <Button onClick={() => { setShowForm((v) => !v); setTestStatus("idle"); }} className="gap-2">
           <Plus className="w-4 h-4" />
           {showForm ? "Cancel" : "New Alert"}
         </Button>
       </div>
 
-      {/* Info banner (no RESEND key) */}
-      <div className="rounded-lg border border-amber-700/40 bg-amber-900/10 px-4 py-3 text-sm text-amber-300 flex gap-2">
-        <Bell className="w-4 h-4 mt-0.5 shrink-0" />
-        <span>
-          Alerts are sent via <strong>Resend</strong>. Set <code className="font-mono text-xs bg-amber-900/30 px-1 rounded">RESEND_API_KEY</code> and{" "}
-          <code className="font-mono text-xs bg-amber-900/30 px-1 rounded">EMAIL_FROM</code> environment variables to activate email delivery.
-          Digests run daily at 08:00 UTC.
-        </span>
+      {/* Setup guide */}
+      <div className="rounded-lg border border-blue-700/40 bg-blue-900/10 px-4 py-3 text-sm text-blue-300 space-y-1.5">
+        <div className="flex items-center gap-2 font-semibold">
+          <Send className="w-4 h-4 shrink-0" />
+          How to set up Telegram alerts
+        </div>
+        <ol className="list-decimal list-inside space-y-1 text-blue-300/80 text-xs ml-1">
+          <li>Message <span className="font-mono bg-blue-900/40 px-1 rounded">@BotFather</span> on Telegram → create a new bot → copy the <strong>Bot Token</strong></li>
+          <li>Start a chat with your bot, then get your <strong>Chat ID</strong> by messaging <span className="font-mono bg-blue-900/40 px-1 rounded">@userinfobot</span></li>
+          <li>Paste both below, test the connection, then save your alert</li>
+        </ol>
+        <a
+          href="https://core.telegram.org/bots#how-do-i-create-a-bot"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300 underline mt-1"
+        >
+          Telegram bot docs <ExternalLink className="w-3 h-3" />
+        </a>
       </div>
 
       {/* Create form */}
@@ -237,26 +292,57 @@ export default function Alerts() {
         <Card className="border-primary/30 bg-primary/5">
           <CardHeader className="pb-3">
             <CardTitle className="text-lg">Create New Alert</CardTitle>
-            <CardDescription>Receive a daily email when new domains match these criteria.</CardDescription>
+            <CardDescription>Receive a Telegram message daily when new domains match these criteria.</CardDescription>
           </CardHeader>
           <CardContent>
             <Form {...form}>
               <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-5">
+
+                <FormField control={form.control} name="name" render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Alert Name</FormLabel>
+                    <FormControl><Input placeholder="e.g. High-score .com BUYs" {...field} /></FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )} />
+
+                <Separator />
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Telegram Setup</p>
+
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <FormField control={form.control} name="name" render={({ field }) => (
+                  <FormField control={form.control} name="telegramBotToken" render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Alert Name</FormLabel>
-                      <FormControl><Input placeholder="e.g. High-score .com BUYs" {...field} /></FormControl>
+                      <FormLabel>Bot Token</FormLabel>
+                      <FormControl><Input placeholder="123456:ABC-DEF..." {...field} /></FormControl>
+                      <FormDescription className="text-xs">From @BotFather</FormDescription>
                       <FormMessage />
                     </FormItem>
                   )} />
-                  <FormField control={form.control} name="email" render={({ field }) => (
+                  <FormField control={form.control} name="telegramChatId" render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Send To Email</FormLabel>
-                      <FormControl><Input type="email" placeholder="you@example.com" {...field} /></FormControl>
+                      <FormLabel>Chat ID</FormLabel>
+                      <FormControl><Input placeholder="-100123456789 or 123456789" {...field} /></FormControl>
+                      <FormDescription className="text-xs">From @userinfobot</FormDescription>
                       <FormMessage />
                     </FormItem>
                   )} />
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <Button type="button" variant="outline" size="sm" className="gap-2" onClick={onTest} disabled={testStatus === "loading"}>
+                    {testStatus === "loading" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+                    Test Connection
+                  </Button>
+                  {testStatus === "ok" && (
+                    <span className="flex items-center gap-1.5 text-sm text-green-400">
+                      <CheckCircle2 className="w-4 h-4" /> Message sent! Check Telegram.
+                    </span>
+                  )}
+                  {testStatus === "error" && (
+                    <span className="flex items-center gap-1.5 text-sm text-red-400">
+                      <XCircle className="w-4 h-4" /> {testError || "Connection failed"}
+                    </span>
+                  )}
                 </div>
 
                 <Separator />
@@ -323,7 +409,7 @@ export default function Alerts() {
             <Card key={i} className="animate-pulse">
               <CardContent className="pt-5 space-y-2">
                 <div className="h-5 bg-muted rounded w-40" />
-                <div className="h-3 bg-muted rounded w-32" />
+                <div className="h-3 bg-muted rounded w-56" />
                 <div className="flex gap-1.5 mt-3">
                   <div className="h-5 bg-muted rounded w-20" />
                   <div className="h-5 bg-muted rounded w-16" />
@@ -334,9 +420,9 @@ export default function Alerts() {
         </div>
       ) : alerts.length === 0 && !showForm ? (
         <div className="text-center py-16 border border-dashed border-border rounded-xl bg-card/30">
-          <Bell className="w-8 h-8 text-muted-foreground/30 mx-auto mb-3" />
+          <Send className="w-8 h-8 text-muted-foreground/30 mx-auto mb-3" />
           <p className="text-muted-foreground font-medium mb-1">No alerts yet</p>
-          <p className="text-muted-foreground/60 text-sm mb-5">Create an alert to get daily emails for matching domains.</p>
+          <p className="text-muted-foreground/60 text-sm mb-5">Create an alert to get instant Telegram messages for matching domains.</p>
           <Button onClick={() => setShowForm(true)} className="gap-2">
             <Plus className="w-4 h-4" /> Create Your First Alert
           </Button>

@@ -4,6 +4,7 @@ import { alertsTable, usersTable } from "@workspace/db";
 import { eq, and } from "drizzle-orm";
 import { randomUUID } from "crypto";
 import { z } from "zod";
+import { testTelegramConnection } from "../lib/telegram";
 
 const router: IRouter = Router();
 
@@ -11,7 +12,8 @@ const DEMO_USER_ID = "demo-user-1";
 
 const AlertBody = z.object({
   name: z.string().min(1).max(100),
-  email: z.string().email(),
+  telegramChatId: z.string().min(1),
+  telegramBotToken: z.string().min(1),
   filter: z.object({
     minScore: z.number().min(0).max(100).optional(),
     recommendation: z.enum(["BUY", "WATCH", "SKIP"]).optional(),
@@ -58,7 +60,8 @@ router.post("/alerts", async (req, res) => {
         id: randomUUID(),
         userId: DEMO_USER_ID,
         name: body.name,
-        email: body.email,
+        telegramChatId: body.telegramChatId,
+        telegramBotToken: body.telegramBotToken,
         filterJson: JSON.stringify(body.filter ?? {}),
         active: true,
       })
@@ -67,6 +70,21 @@ router.post("/alerts", async (req, res) => {
   } catch (err) {
     req.log.error({ err }, "Failed to create alert");
     res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+router.post("/alerts/test-telegram", async (req, res) => {
+  try {
+    const { botToken, chatId } = z.object({
+      botToken: z.string().min(1),
+      chatId: z.string().min(1),
+    }).parse(req.body);
+
+    const result = await testTelegramConnection(botToken, chatId);
+    res.json(result);
+  } catch (err) {
+    req.log.error({ err }, "Failed to test Telegram");
+    res.status(400).json({ ok: false, error: "Invalid request" });
   }
 });
 

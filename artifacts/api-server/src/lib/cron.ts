@@ -1,14 +1,14 @@
 import { logger } from "./logger";
 import { db } from "@workspace/db";
-import { alertsTable, domainsTable, metricsTable } from "@workspace/db";
-import { eq, gte, and, inArray } from "drizzle-orm";
-import { sendAlertEmail } from "./email";
+import { alertsTable, domainsTable } from "@workspace/db";
+import { eq } from "drizzle-orm";
+import { sendTelegramAlert } from "./telegram";
 
 const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
 const ONE_MIN_MS = 60 * 1000;
 
 let lastIngestAt: Date | null = null;
-let alertsSentToday: string | null = null; // "YYYY-MM-DD"
+let alertsSentToday: string | null = null;
 
 function todayUTC(): string {
   return new Date().toISOString().slice(0, 10);
@@ -63,9 +63,8 @@ async function runAlerts(): Promise<void> {
         // ignore malformed
       }
 
-      // Build domain query conditions
       const domainRows = await db.query.domainsTable.findMany({
-        where: (t, { gte: drizzleGte }) => drizzleGte(t.createdAt, since),
+        where: (t, { gte }) => gte(t.createdAt, since),
         with: { metrics: true },
       });
 
@@ -82,13 +81,13 @@ async function runAlerts(): Promise<void> {
 
       if (matched.length === 0) continue;
 
-      // Sort by rarity score desc, cap at 15
       const top15 = matched
         .sort((a, b) => (b.metrics?.rarityScore ?? 0) - (a.metrics?.rarityScore ?? 0))
         .slice(0, 15);
 
-      const sent = await sendAlertEmail({
-        to: alert.email,
+      const sent = await sendTelegramAlert({
+        botToken: alert.telegramBotToken,
+        chatId: alert.telegramChatId,
         alertName: alert.name,
         domains: top15.map((d) => ({
           name: d.name,
@@ -113,23 +112,20 @@ async function runAlerts(): Promise<void> {
       }
     }
 
-    logger.info({ processed: alerts.length, sent: totalSent }, "Daily alert digest complete");
+    logger.info({ processed: alerts.length, sent: totalSent }, "Daily Telegram alert digest complete");
   } catch (err) {
     logger.error({ err }, "Alert digest failed");
   }
 }
 
 export function startCron(): void {
-  // Run ingest immediately if never run
   runIngest().catch(() => {});
 
   setInterval(() => {
-    // Ingest every 6h
     if (!lastIngestAt || Date.now() - lastIngestAt.getTime() >= SIX_HOURS_MS) {
       runIngest().catch(() => {});
     }
 
-    // Daily alerts at ALERT_HOUR_UTC (default 8:00 UTC)
     const now = new Date();
     if (now.getUTCHours() === alertHourUTC() && now.getUTCMinutes() === 0) {
       runAlerts().catch(() => {});
@@ -138,6 +134,6 @@ export function startCron(): void {
 
   logger.info(
     { alertHour: alertHourUTC() },
-    "Cron scheduler started (ingest every 6h, alerts daily at configured UTC hour)",
+    "Cron scheduler started (ingest every 6h, Telegram alerts daily at configured UTC hour)",
   );
 }
