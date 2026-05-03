@@ -1,0 +1,256 @@
+
+```
+Build the AI Brand Checker page at /src/app/brand-checker/page.tsx.
+This is the unique feature DomCop does not have.
+
+'use client'
+import { useState } from 'react'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+
+const TIER_LABELS: Record<string, string> = {
+  legendary: '🔥 Legendary',
+  epic: '💎 Epic',
+  rare: '⭐ Rare',
+  uncommon: '✓ Uncommon',
+  common: '· Common',
+}
+
+// Generate domain name variations from a keyword
+function generateVariations(keyword: string): string[] {
+  const k = keyword.toLowerCase().replace(/[^a-z0-9]/g, '')
+  const prefixes = ['get', 'try', 'use', 'go', 'my', 'the']
+  const suffixes = ['hub', 'io', 'app', 'ai', 'hq', 'ly', 'ify', 'lab', 'base', 'pro']
+  const tlds = ['.com', '.io', '.ai', '.co']
+
+  const names: string[] = [k]
+  prefixes.slice(0, 3).forEach(p => names.push(`${p}${k}`))
+  suffixes.slice(0, 4).forEach(s => names.push(`${k}${s}`))
+
+  const domains: string[] = []
+  names.forEach(n => tlds.forEach(t => domains.push(`${n}${t}`)))
+  return [...new Set(domains)].slice(0, 12)
+}
+
+export default function BrandChecker() {
+  const [input, setInput] = useState('')
+  const [results, setResults] = useState<any[]>([])
+  const [loading, setLoading] = useState(false)
+  const [mode, setMode] = useState<'single' | 'bulk'>('single')
+
+  const analyzeSingle = async () => {
+    if (!input.trim()) return
+    setLoading(true)
+    setResults([])
+
+    const domain = input.includes('.') ? input.toLowerCase().trim() : `${input.toLowerCase().trim()}.com`
+    const res = await fetch(`/api/domains/${domain}`)
+    const data = await res.json()
+    setResults([{ domain: data.domain, metrics: data.metrics }])
+    setLoading(false)
+  }
+
+  const analyzeBulk = async () => {
+    if (!input.trim()) return
+    setLoading(true)
+    setResults([])
+
+    const keyword = input.toLowerCase().trim().split('.')[0]
+    const variations = generateVariations(keyword)
+
+    const res = await fetch('/api/score', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ domains: variations }),
+    })
+    const data = await res.json()
+    setResults(data.results || [])
+    setLoading(false)
+  }
+
+  const ScoreBar = ({ label, value, color }: { label: string; value?: number; color: string }) => (
+    <div className="mb-2">
+      <div className="flex justify-between text-xs mb-1">
+        <span className="text-gray-500">{label}</span>
+        <span className="font-semibold">{value?.toFixed(0) ?? '—'}</span>
+      </div>
+      <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+        <div className={`h-full ${color} rounded-full`} style={{ width: `${Math.min(100, value || 0)}%` }} />
+      </div>
+    </div>
+  )
+
+  return (
+    <div className="max-w-4xl mx-auto py-12 px-4">
+
+      {/* Header */}
+      <div className="text-center mb-10">
+        <h1 className="text-4xl font-bold text-gray-900 mb-3">AI Brand Checker</h1>
+        <p className="text-gray-500 text-lg max-w-xl mx-auto">
+          Type any domain or keyword. Get instant AI brandability score, estimated value, and investment signal.
+        </p>
+      </div>
+
+      {/* Mode toggle */}
+      <div className="flex justify-center mb-4">
+        <div className="bg-gray-100 rounded-lg p-1 flex">
+          <button onClick={() => setMode('single')}
+            className={`px-4 py-1.5 text-sm rounded-md font-medium transition-all ${mode === 'single' ? 'bg-white shadow text-gray-900' : 'text-gray-500'}`}>
+            Single Domain
+          </button>
+          <button onClick={() => setMode('bulk')}
+            className={`px-4 py-1.5 text-sm rounded-md font-medium transition-all ${mode === 'bulk' ? 'bg-white shadow text-gray-900' : 'text-gray-500'}`}>
+            Keyword → Variations
+          </button>
+        </div>
+      </div>
+
+      {/* Input */}
+      <div className="flex gap-2 mb-3">
+        <Input
+          className="h-12 text-base font-mono"
+          placeholder={mode === 'single' ? 'relayo.com or relayo' : 'Enter keyword like: relay, fintech, aiflow'}
+          value={input}
+          onChange={e => setInput(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && (mode === 'single' ? analyzeSingle() : analyzeBulk())}
+        />
+        <Button className="h-12 px-6 text-base"
+          onClick={mode === 'single' ? analyzeSingle : analyzeBulk}
+          disabled={loading}>
+          {loading ? 'Analyzing...' : mode === 'single' ? 'Analyze →' : 'Generate Ideas →'}
+        </Button>
+      </div>
+
+      {mode === 'bulk' && (
+        <p className="text-xs text-center text-gray-400 mb-6">
+          Generates 12 domain variations and scores all of them with AI simultaneously
+        </p>
+      )}
+
+      {/* Results */}
+      {results.length > 0 && (
+        <div className={`grid gap-4 mt-6 ${results.length > 1 ? 'grid-cols-1 md:grid-cols-2' : 'grid-cols-1'}`}>
+          {results
+            .sort((a, b) => (b.metrics?.rarityScore || 0) - (a.metrics?.rarityScore || 0))
+            .map((r: any, i) => {
+              const m = r.metrics || {}
+              return (
+                <Card key={i} className={`border ${
+                  m.recommendation === 'BUY' ? 'border-green-300 bg-green-50' :
+                  m.recommendation === 'WATCH' ? 'border-yellow-200' : ''
+                }`}>
+                  <CardContent className="pt-5">
+
+                    {/* Domain name + recommendation */}
+                    <div className="flex items-start justify-between mb-3">
+                      <div>
+                        <div className="font-mono font-bold text-lg text-gray-900">
+                          {r.domain?.name}
+                        </div>
+                        <div className="flex gap-1.5 mt-1">
+                          {m.rarityTier && (
+                            <span className="text-xs text-gray-500 capitalize">{TIER_LABELS[m.rarityTier]}</span>
+                          )}
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        {m.recommendation && (
+                          <span className={`text-sm font-bold px-2 py-1 rounded ${
+                            m.recommendation === 'BUY' ? 'bg-green-600 text-white' :
+                            m.recommendation === 'WATCH' ? 'bg-yellow-500 text-white' :
+                            'bg-gray-200 text-gray-500'
+                          }`}>
+                            {m.recommendation}
+                          </span>
+                        )}
+                        {m.estimatedValue && (
+                          <div className="text-sm font-bold text-gray-900 mt-1">
+                            ${m.estimatedValue >= 1000
+                              ? `${(m.estimatedValue/1000).toFixed(1)}K`
+                              : m.estimatedValue}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Score bars */}
+                    <div className="mb-3">
+                      <ScoreBar label="Rarity Score" value={m.rarityScore} color="bg-blue-500" />
+                      <ScoreBar label="Brand Score" value={m.brandScore} color="bg-purple-500" />
+                      <ScoreBar label="Pronounceability" value={m.pronounceScore} color="bg-green-500" />
+                    </div>
+
+                    {/* AI reason */}
+                    {m.aiReason && (
+                      <p className="text-xs text-gray-500 italic mb-3">"{m.aiReason}"</p>
+                    )}
+
+                    {/* Links */}
+                    <div className="flex gap-2">
+                      <a href={`/domain/${r.domain?.name}`}
+                        className="flex-1 text-center text-xs py-1.5 bg-gray-100 hover:bg-gray-200 rounded text-gray-700">
+                        Full Analysis
+                      </a>
+                      <a href={`https://www.godaddy.com/domainsearch/find?checkAvail=1&domainToCheck=${r.domain?.name}`}
+                        target="_blank" rel="noopener noreferrer"
+                        className="flex-1 text-center text-xs py-1.5 bg-blue-600 hover:bg-blue-700 rounded text-white">
+                        Register →
+                      </a>
+                    </div>
+                  </CardContent>
+                </Card>
+              )
+            })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+Also create the /api/score route at /src/app/api/score/route.ts:
+
+import { NextRequest, NextResponse } from 'next/server'
+import { aiScoreBatch } from '@/lib/ai/client'
+import { calculateRarityScore, getRarityTier } from '@/lib/scoring'
+import { rdapLookup } from '@/lib/enrichment/rdap'
+import { getPageRank } from '@/lib/enrichment/openpagerank'
+
+export async function POST(req: NextRequest) {
+  const { domains } = await req.json()
+  if (!Array.isArray(domains)) return NextResponse.json({ error: 'domains array required' }, { status: 400 })
+
+  const limited = domains.slice(0, 20)
+
+  // Get DA for all domains in parallel
+  const [prMap] = await Promise.allSettled([
+    getPageRank(limited),
+  ])
+  const daMap = prMap.status === 'fulfilled' ? prMap.value : new Map()
+
+  // Calculate rarity scores instantly (no AI needed)
+  const scoredDomains = limited.map(name => {
+    const parts = name.split('.')
+    const sld = parts[0]
+    const tld = parts.slice(1).join('.')
+    const da = daMap.get(name)?.da
+    const breakdown = calculateRarityScore({ name: sld, tld, domainAuthority: da })
+    return { name, sld, tld, da, breakdown, tier: getRarityTier(breakdown.total) }
+  })
+
+  // AI batch score all of them (one API call)
+  const aiResults = await aiScoreBatch(scoredDomains.map(d => ({ name: d.name, da: d.da })))
+
+  const results = scoredDomains.map(d => ({
+    domain: { name: d.name, sld: d.sld, tld: d.tld },
+    metrics: {
+      ...d.breakdown,
+      rarityTier: d.tier,
+      domainAuthority: d.da,
+      ...(aiResults.get(d.name) || {}),
+    },
+  }))
+
+  return NextResponse.json({ results })
+}
+```

@@ -6,6 +6,7 @@ import analyticsRouter from "./analytics";
 import brandCheckerRouter from "./brandchecker";
 import ingestRouter from "./ingest";
 import enrichmentRouter from "./enrichment";
+import scoreRouter from "./score";
 
 const router: IRouter = Router();
 
@@ -16,5 +17,6 @@ router.use(analyticsRouter);
 router.use(brandCheckerRouter);
 router.use(ingestRouter);
 router.use(enrichmentRouter);
+router.use(scoreRouter);
 
 export default router;
