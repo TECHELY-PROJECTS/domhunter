@@ -1,0 +1,57 @@
+## FINAL CHECKLIST
+
+Before going live, verify each of these:
+
+**Database**
+- [ ] MySQL database created in Hostinger hPanel
+- [ ] DATABASE_URL correct in .env.production
+- [ ] `npx prisma migrate deploy` ran without errors
+- [ ] `npx prisma studio` shows empty tables (schema is correct)
+
+**AI**
+- [ ] COMETAPI_API_KEY set — test by visiting /brand-checker and typing any domain
+- [ ] OPENROUTER_API_KEY set as fallback
+
+**Queues**
+- [ ] Upstash Redis account created (free tier)
+- [ ] UPSTASH_REDIS_URL and UPSTASH_REDIS_TOKEN set
+- [ ] Workers running: `pm2 status` shows domhunter-workers as online
+
+**Data pipeline**
+- [ ] POST to /api/ingest manually once to seed initial data:
+  `curl -X POST https://yourdomain.com/api/ingest -H "Authorization: Bearer YOUR_CRON_SECRET"`
+- [ ] After 10 minutes, visit /explore — domains should be appearing
+- [ ] After 30 minutes, brand scores and AI recommendations should be filling in
+
+**Email**
+- [ ] Resend account created, domain verified in Resend dashboard
+- [ ] EMAIL_FROM matches your verified domain
+- [ ] Test alert by creating one in /settings/alerts and manually hitting /api/cron/alerts
+
+**Cron jobs**
+- [ ] Two cron jobs added in Hostinger hPanel → Cron Jobs (see Step 17)
+- [ ] CRON_SECRET matches in .env and cron curl commands
+
+**Done.** Your DomCop clone is live.
+```
+
+---
+
+## WHAT YOU NOW HAVE
+
+| Page | Status |
+|---|---|
+| `/` | Landing page with live stats + sample BUY domains |
+| `/explore` | Full filterable domain table, DomCop-style |
+| `/domain/[fqdn]` | Full detail: scores, WHOIS, auction, buy links |
+| `/brand-checker` | AI domain analyzer + variation generator |
+| `/portfolio` | User watchlist with session auth |
+| `/api/domains` | Paginated + filtered REST endpoint |
+| `/api/score` | Batch AI scoring endpoint |
+| `/api/ingest` | Cron-triggered domain ingestion |
+| `/api/cron/alerts` | Daily email alerts via Resend |
+
+**Pipeline runs fully automated:**
+Every 6h → GoDaddy RSS + NameJet RSS + expireddomains.net → enriched (DA, WHOIS, backlinks) → AI scored (BUY/WATCH/SKIP + value) → appears in /explore.
+
+**Cost: ~$3/month.**
