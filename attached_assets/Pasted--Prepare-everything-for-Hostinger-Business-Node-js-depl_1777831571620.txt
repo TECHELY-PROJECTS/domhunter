@@ -1,0 +1,153 @@
+```
+Prepare everything for Hostinger Business Node.js deployment.
+
+1. Update next.config.ts:
+
+import type { NextConfig } from 'next'
+const config: NextConfig = {
+  output: 'standalone',
+  experimental: {
+    serverExternalPackages: ['@prisma/client', 'ioredis', 'bullmq'],
+  },
+}
+export default config
+
+2. Create ecosystem.config.js in project root:
+
+module.exports = {
+  apps: [
+    {
+      name: 'domhunter-web',
+      script: '.next/standalone/server.js',
+      instances: 2,
+      exec_mode: 'cluster',
+      env: { NODE_ENV: 'production', PORT: 3000 },
+      error_file: './logs/web-err.log',
+      out_file: './logs/web-out.log',
+      restart_delay: 4000,
+      max_restarts: 10,
+    },
+    {
+      name: 'domhunter-workers',
+      script: 'dist/workers.js',
+      instances: 1,
+      env: { NODE_ENV: 'production' },
+      error_file: './logs/worker-err.log',
+      out_file: './logs/worker-out.log',
+      restart_delay: 5000,
+      max_restarts: 5,
+    },
+  ],
+}
+
+3. Create /src/workers.ts (compiled separately for PM2):
+
+import './lib/jobs/enrich-worker'
+import './lib/jobs/ai-score-worker'
+console.log('[Workers] Enrichment + AI scoring workers running')
+process.on('SIGTERM', () => { console.log('[Workers] Shutting down'); process.exit(0) })
+
+4. Create scripts/deploy.sh:
+
+#!/bin/bash
+set -e
+
+echo "== DomHunter Deploy =="
+
+echo "1. Installing dependencies..."
+npm ci
+
+echo "2. Generating Prisma client..."
+npx prisma generate
+
+echo "3. Building Next.js..."
+npm run build
+
+echo "4. Compiling workers..."
+npx tsc src/workers.ts --outDir dist --moduleResolution node --esModuleInterop true --skipLibCheck true || true
+
+echo "5. Running DB migrations..."
+npx prisma migrate deploy
+
+echo "6. Copying static assets..."
+cp -r public .next/standalone/public 2>/dev/null || true
+cp -r .next/static .next/standalone/.next/static 2>/dev/null || true
+mkdir -p logs
+
+echo "7. Starting with PM2..."
+pm2 reload ecosystem.config.js --update-env 2>/dev/null || pm2 start ecosystem.config.js
+
+echo ""
+echo "✅ Deployed! App running at http://localhost:3000"
+echo "   Web:     pm2 logs domhunter-web"
+echo "   Workers: pm2 logs domhunter-workers"
+
+5. Update package.json scripts section:
+
+"scripts": {
+  "dev": "next dev",
+  "build": "next build",
+  "start": "node .next/standalone/server.js",
+  "workers": "tsx src/workers.ts",
+  "db:push": "prisma db push",
+  "db:migrate": "prisma migrate deploy",
+  "db:studio": "prisma studio",
+  "deploy": "bash scripts/deploy.sh",
+  "logs": "pm2 logs"
+}
+
+6. Create .env.production — fill in your real values:
+
+# Database (Hostinger hPanel → Databases → MySQL)
+DATABASE_URL="mysql://DB_USER:DB_PASS@localhost:3306/domhunter"
+
+# App URL
+NEXTAUTH_URL="https://yourdomain.com"
+NEXTAUTH_SECRET="run: openssl rand -hex 32"
+
+# AI Providers (use both — CometAPI used first, OpenRouter as fallback)
+COMETAPI_API_KEY="your_cometapi_key"
+OPENROUTER_API_KEY="your_openrouter_key"
+
+# Enrichment APIs (all free)
+OPENPAGERANK_API_KEY="your_openpagerank_key"
+WHOISXML_API_KEY="your_whoisxml_key"
+
+# Job Queue (Upstash free tier)
+UPSTASH_REDIS_URL="rediss://..."
+UPSTASH_REDIS_TOKEN="..."
+
+# Email alerts (Resend free 3K/mo)
+RESEND_API_KEY="re_..."
+EMAIL_FROM="alerts@yourdomain.com"
+
+# Cron security
+CRON_SECRET="any_long_random_string"
+
+# Domain data sources (all free)
+EXPIREDDOMAINS_SESSION_COOKIE="your_ef_session_cookie"
+ICANN_USERNAME="your_icann_email"
+ICANN_PASSWORD="your_icann_password"
+GODADDY_API_KEY="your_godaddy_key"
+GODADDY_API_SECRET="your_godaddy_secret"
+
+7. On Hostinger, run these commands once via SSH:
+
+# Install Node.js 20 if not already installed
+node -v
+
+# Install PM2 globally
+npm install -g pm2 tsx
+
+# Create MySQL database in hPanel first, then:
+cd /path/to/domhunter
+bash scripts/deploy.sh
+
+# Check everything is running
+pm2 status
+pm2 logs domhunter-web --lines 20
+
+# Set PM2 to auto-start on server reboot
+pm2 startup
+pm2 save
+```
