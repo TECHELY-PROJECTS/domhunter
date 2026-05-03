@@ -38,10 +38,11 @@ export async function fetchExpiredDomainsScrape(
       .each((_, row) => {
         const domain = $(row)
           .find("td.field_domain a")
+          .first()
           .text()
           .trim()
           .toLowerCase();
-        if (domain && domain.includes(".") && !domain.startsWith("xn--")) {
+        if (domain && domain.includes(".") && domain.length < 100 && !domain.startsWith("xn--")) {
           const blText = $(row).find("td").eq(1).text().trim();
           const blMatch = blText.match(/^(\d+(?:\.\d+)?)\s*([Kk])?/);
           const backlinks = blMatch
@@ -52,7 +53,7 @@ export async function fetchExpiredDomainsScrape(
 
           results.push({
             name: domain,
-            source: "expireddomains",
+            source: "expired_domains",
             backlinks,
           });
         }
