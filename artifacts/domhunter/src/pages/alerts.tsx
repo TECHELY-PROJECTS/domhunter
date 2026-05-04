@@ -216,7 +216,7 @@ export default function Alerts() {
 
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
-    defaultValues: { name: "", telegramChatId: "", telegramBotToken: "", minScore: 60, recommendation: "", tier: "" },
+    defaultValues: { name: "", telegramChatId: "", telegramBotToken: "", minScore: 60, recommendation: "any", tier: "any" },
   });
 
   const onTest = async () => {
@@ -239,8 +239,8 @@ export default function Alerts() {
 
   const onSubmit = (values: z.infer<typeof formSchema>) => {
     const filter: AlertFilter = { minScore: values.minScore };
-    if (values.recommendation) filter.recommendation = values.recommendation;
-    if (values.tier) filter.tier = values.tier;
+    if (values.recommendation && values.recommendation !== "any") filter.recommendation = values.recommendation;
+    if (values.tier && values.tier !== "any") filter.tier = values.tier;
     createMut.mutate({
       name: values.name,
       telegramChatId: values.telegramChatId,
@@ -369,7 +369,7 @@ export default function Alerts() {
                       <Select value={field.value} onValueChange={field.onChange}>
                         <FormControl><SelectTrigger><SelectValue placeholder="Any signal" /></SelectTrigger></FormControl>
                         <SelectContent>
-                          <SelectItem value="">Any signal</SelectItem>
+                          <SelectItem value="any">Any signal</SelectItem>
                           <SelectItem value="BUY">BUY only</SelectItem>
                           <SelectItem value="WATCH">WATCH only</SelectItem>
                         </SelectContent>
@@ -382,11 +382,11 @@ export default function Alerts() {
                       <Select value={field.value} onValueChange={field.onChange}>
                         <FormControl><SelectTrigger><SelectValue placeholder="Any tier" /></SelectTrigger></FormControl>
                         <SelectContent>
-                          <SelectItem value="">Any tier</SelectItem>
-                          <SelectItem value="legendary">🔥 Legendary</SelectItem>
-                          <SelectItem value="epic">💎 Epic</SelectItem>
-                          <SelectItem value="rare">⭐ Rare</SelectItem>
-                          <SelectItem value="uncommon">✓ Uncommon</SelectItem>
+                          <SelectItem value="any">Any tier</SelectItem>
+                          <SelectItem value="legendary">Legendary</SelectItem>
+                          <SelectItem value="epic">Epic</SelectItem>
+                          <SelectItem value="rare">Rare</SelectItem>
+                          <SelectItem value="uncommon">Uncommon</SelectItem>
                         </SelectContent>
                       </Select>
                     </FormItem>

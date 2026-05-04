@@ -1,19 +1,126 @@
-// Multi-model AI strategy:
+// ═══════════════════════════════════════════════════════════════════════════
+// AI Model Strategy — cascading fallback per task
 //
-//  Bulk scoring  → CometAPI: deepseek-chat            (high volume, cheap)
-//  Brand Checker → CometAPI: claude-haiku-4-5-20251001 (fast, accurate)
-//  Deep analysis → CometAPI: deepseek-v3.2             (smartest)
-//  Fallback      → OpenRouter: inclusionai/ling-2.6-1t:free (when no CometAPI key)
+// Priority order (per user preference, $3/mo budget):
+//   1. OpenRouter FREE models      ← always tried first
+//   2. CometAPI paid (cheap)       ← if free fails
+//   3. OpenRouter paid (cheap)     ← last resort
+//
+// ┌─────────────┬────────────────────────────────────────────────────────────┐
+// │ Task        │ Chain                                                       │
+// ├─────────────┼────────────────────────────────────────────────────────────┤
+// │ bulk        │ llama-3.3-70b:free → gemma-4-31b:free                     │
+// │             │   → comet:deepseek-chat → OR:deepseek-chat-v3-0324         │
+// ├─────────────┼────────────────────────────────────────────────────────────┤
+// │ brand       │ gpt-oss-120b:free → hermes-3-405b:free                    │
+// │             │   → comet:claude-haiku-4-5 → OR:gpt-4o-mini               │
+// ├─────────────┼────────────────────────────────────────────────────────────┤
+// │ deep        │ nemotron-super-120b:free → gpt-oss-120b:free              │
+// │             │   → comet:deepseek-v3.2 → OR:deepseek-chat-v3-0324        │
+// └─────────────┴────────────────────────────────────────────────────────────┘
+// ═══════════════════════════════════════════════════════════════════════════
 
 const COMETAPI_BASE = "https://api.cometapi.com/v1/chat/completions";
 const OPENROUTER_BASE = "https://openrouter.ai/api/v1/chat/completions";
 
-const MODELS = {
-  bulk:     { provider: "comet",      model: "deepseek-chat"                 },
-  brand:    { provider: "comet",      model: "claude-haiku-4-5-20251001"     },
-  deep:     { provider: "comet",      model: "deepseek-v3.2"                 },
-  fallback: { provider: "openrouter", model: "inclusionai/ling-2.6-1t:free"  },
-} as const;
+type Provider = "openrouter" | "comet";
+
+interface ModelEntry {
+  provider: Provider;
+  model: string;
+  free: boolean;
+  label: string;
+}
+
+const STRATEGIES: Record<"bulk" | "brand" | "deep", ModelEntry[]> = {
+
+  // ── Bulk scoring: ingests up to 20 domains at once ─────────────────────
+  // Needs reliable structured JSON, fast throughput
+  bulk: [
+    {
+      provider: "openrouter",
+      model: "meta-llama/llama-3.3-70b-instruct:free",
+      free: true,
+      label: "Llama-3.3-70B (free)",
+    },
+    {
+      provider: "openrouter",
+      model: "google/gemma-4-31b-it:free",
+      free: true,
+      label: "Gemma-4-31B (free)",
+    },
+    {
+      provider: "comet",
+      model: "deepseek-chat",
+      free: false,
+      label: "DeepSeek-Chat via CometAPI (paid)",
+    },
+    {
+      provider: "openrouter",
+      model: "deepseek/deepseek-chat-v3-0324",
+      free: false,
+      label: "DeepSeek-Chat-V3 via OpenRouter (paid)",
+    },
+  ],
+
+  // ── Brand analysis: single domain deep check ───────────────────────────
+  // Needs nuanced understanding of brandability, memorability, market fit
+  brand: [
+    {
+      provider: "openrouter",
+      model: "openai/gpt-oss-120b:free",
+      free: true,
+      label: "GPT-OSS-120B (free)",
+    },
+    {
+      provider: "openrouter",
+      model: "nousresearch/hermes-3-llama-3.1-405b:free",
+      free: true,
+      label: "Hermes-3-405B (free)",
+    },
+    {
+      provider: "comet",
+      model: "claude-haiku-4-5-20251001",
+      free: false,
+      label: "Claude Haiku 4.5 via CometAPI (paid)",
+    },
+    {
+      provider: "openrouter",
+      model: "openai/gpt-4o-mini",
+      free: false,
+      label: "GPT-4o-mini via OpenRouter (paid)",
+    },
+  ],
+
+  // ── Deep investment analysis: full thesis, risk, comparables ──────────
+  // Needs strongest reasoning and domain investment expertise
+  deep: [
+    {
+      provider: "openrouter",
+      model: "nvidia/nemotron-3-super-120b-a12b:free",
+      free: true,
+      label: "Nemotron-Super-120B (free)",
+    },
+    {
+      provider: "openrouter",
+      model: "openai/gpt-oss-120b:free",
+      free: true,
+      label: "GPT-OSS-120B (free)",
+    },
+    {
+      provider: "comet",
+      model: "deepseek-v3.2",
+      free: false,
+      label: "DeepSeek-V3.2 via CometAPI (paid)",
+    },
+    {
+      provider: "openrouter",
+      model: "deepseek/deepseek-chat-v3-0324",
+      free: false,
+      label: "DeepSeek-Chat-V3 via OpenRouter (paid)",
+    },
+  ],
+};
 
 export interface AIValuation {
   brandScore: number;
@@ -32,99 +139,110 @@ export interface AIValuation {
   targetBuyer: string;
 }
 
+// ── Core: cascading model caller ────────────────────────────────────────────
 async function callAI(
   messages: Array<{ role: string; content: string }>,
-  strategy: keyof typeof MODELS,
-): Promise<string | null> {
+  strategy: keyof typeof STRATEGIES,
+): Promise<{ content: string; model: string; free: boolean } | null> {
   const cometKey = process.env.COMETAPI_API_KEY;
   const orKey = process.env.OPENROUTER_API_KEY;
 
-  const { provider, model } = MODELS[strategy];
-
-  // Pick base URL and key based on provider preference
-  let baseUrl: string;
-  let apiKey: string;
-
-  if (provider === "comet" && cometKey) {
-    baseUrl = COMETAPI_BASE;
-    apiKey = cometKey;
-  } else if (provider === "openrouter" && orKey) {
-    baseUrl = OPENROUTER_BASE;
-    apiKey = orKey;
-  } else if (cometKey) {
-    // Fallback to comet with fallback model
-    baseUrl = COMETAPI_BASE;
-    apiKey = cometKey;
-  } else if (orKey) {
-    baseUrl = OPENROUTER_BASE;
-    apiKey = orKey;
-  } else {
+  if (!cometKey && !orKey) {
+    console.error("[AI] No API keys configured (COMETAPI_API_KEY or OPENROUTER_API_KEY)");
     return null;
   }
 
-  // For openrouter fallback model, swap model name
-  const effectiveModel =
-    !cometKey && provider === "comet" ? MODELS.fallback.model : model;
+  const chain = STRATEGIES[strategy];
 
-  try {
-    const res = await fetch(baseUrl, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-        ...(baseUrl.includes("openrouter") && {
-          "HTTP-Referer": "https://domhunter.io",
-          "X-Title": "DomHunter",
+  for (const entry of chain) {
+    if (entry.provider === "comet" && !cometKey) continue;
+    if (entry.provider === "openrouter" && !orKey) continue;
+
+    const baseUrl = entry.provider === "comet" ? COMETAPI_BASE : OPENROUTER_BASE;
+    const apiKey = entry.provider === "comet" ? cometKey! : orKey!;
+
+    try {
+      const res = await fetch(baseUrl, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+          ...(entry.provider === "openrouter" && {
+            "HTTP-Referer": "https://domhunter.io",
+            "X-Title": "DomHunter",
+          }),
+        },
+        body: JSON.stringify({
+          model: entry.model,
+          temperature: 0.1,
+          messages,
         }),
-      },
-      body: JSON.stringify({
-        model: effectiveModel,
-        temperature: 0.1,
-        messages,
-      }),
-    });
+        signal: AbortSignal.timeout(30_000),
+      });
 
-    if (!res.ok) {
-      const errText = await res.text().then((t) => t.slice(0, 200));
-      console.error(`[AI] ${strategy}/${effectiveModel} error ${res.status}: ${errText}`);
-      return null;
+      if (!res.ok) {
+        const errText = await res.text().then((t) => t.slice(0, 300));
+        console.error(`[AI] ${strategy} | ${entry.label} → HTTP ${res.status}: ${errText} — trying next`);
+        continue;
+      }
+
+      const data = (await res.json()) as {
+        choices?: Array<{ message?: { content?: string } }>;
+        error?: { message: string };
+      };
+
+      if (data.error) {
+        console.error(`[AI] ${strategy} | ${entry.label} → API error: ${data.error.message} — trying next`);
+        continue;
+      }
+
+      const content = data.choices?.[0]?.message?.content?.trim() ?? null;
+      if (!content) {
+        console.error(`[AI] ${strategy} | ${entry.label} → empty response — trying next`);
+        continue;
+      }
+
+      console.log(`[AI] ${strategy} ✓ ${entry.label}`);
+      return { content, model: entry.model, free: entry.free };
+
+    } catch (e) {
+      console.error(`[AI] ${strategy} | ${entry.label} → ${(e as Error).message} — trying next`);
     }
-
-    const data = (await res.json()) as {
-      choices?: Array<{ message?: { content?: string } }>;
-    };
-    return data.choices?.[0]?.message?.content ?? null;
-  } catch (e) {
-    console.error(`[AI] ${strategy}/${effectiveModel} call failed:`, (e as Error).message);
-    return null;
   }
+
+  console.error(`[AI] ${strategy} → all models in chain exhausted`);
+  return null;
 }
 
+// ── JSON parser: strips markdown fences, handles edge cases ───────────────
 function parseJSON<T>(text: string): T | null {
   try {
+    // Strip ```json ... ``` fences
     const cleaned = text
-      .replace(/```json\s*/g, "")
-      .replace(/```\s*/g, "")
+      .replace(/^```(?:json)?\s*/m, "")
+      .replace(/\s*```\s*$/m, "")
       .trim();
     return JSON.parse(cleaned) as T;
   } catch {
+    // Try extracting the first { ... } block if outer parse fails
+    const match = text.match(/\{[\s\S]+\}/);
+    if (match) {
+      try { return JSON.parse(match[0]) as T; } catch { /* fall through */ }
+    }
     return null;
   }
 }
 
-// ── Single domain quick score (brand checker single mode) ──────────────────
+// ── Single domain brand analysis (Brand Checker + Domain Detail enrich) ───
 export async function aiScoreDomain(
   domain: string,
   context?: { age?: number; backlinks?: number; da?: number },
 ): Promise<AIValuation | null> {
-  const hasKey = process.env.COMETAPI_API_KEY || process.env.OPENROUTER_API_KEY;
-  if (!hasKey) return null;
-
   const contextStr = context
     ? `Age: ${context.age ?? "unknown"} years. Backlinks: ${context.backlinks ?? 0}. DA: ${context.da ?? 0}/100.`
     : "";
 
-  const text = await callAI(
+  const result = await callAI(
     [
       {
         role: "user",
@@ -146,16 +264,15 @@ Return ONLY valid JSON, no markdown, no explanation:
     "brand",
   );
 
-  return text ? parseJSON<AIValuation>(text) : null;
+  return result ? parseJSON<AIValuation>(result.content) : null;
 }
 
-// ── Batch scoring — uses free Ling-2.6 model, ≤20 domains per call ─────────
+// ── Batch scoring: up to 20 domains per call (ingest pipeline) ────────────
 export async function aiScoreBatch(
   domains: Array<{ name: string; age?: number; backlinks?: number; da?: number }>,
 ): Promise<Map<string, AIValuation>> {
   const results = new Map<string, AIValuation>();
-  const hasKey = process.env.COMETAPI_API_KEY || process.env.OPENROUTER_API_KEY;
-  if (!hasKey) return results;
+  if (!process.env.COMETAPI_API_KEY && !process.env.OPENROUTER_API_KEY) return results;
 
   const batchSize = 20;
 
@@ -168,7 +285,7 @@ export async function aiScoreBatch(
       )
       .join("\n");
 
-    const text = await callAI(
+    const result = await callAI(
       [
         {
           role: "user",
@@ -176,7 +293,7 @@ export async function aiScoreBatch(
 
 ${list}
 
-Return ONLY a valid JSON object keyed by domain name:
+Return ONLY a valid JSON object keyed by exact domain name:
 {
   "example.com": {
     "brandScore": 72,
@@ -192,24 +309,26 @@ Return ONLY a valid JSON object keyed by domain name:
       "bulk",
     );
 
-    if (text) {
-      const parsed = parseJSON<Record<string, AIValuation>>(text);
+    if (result) {
+      const parsed = parseJSON<Record<string, AIValuation>>(result.content);
       if (parsed) {
         for (const [domain, val] of Object.entries(parsed)) {
           results.set(domain, val);
         }
+      } else {
+        console.error(`[AI] bulk — JSON parse failed for batch ${Math.floor(i / batchSize) + 1}`);
       }
     }
 
     if (i + batchSize < domains.length) {
-      await new Promise((r) => setTimeout(r, 300));
+      await new Promise((r) => setTimeout(r, 500));
     }
   }
 
   return results;
 }
 
-// ── Deep investment analysis — uses DeepSeek Chat ──────────────────────────
+// ── Deep investment analysis (Domain Detail page) ──────────────────────────
 export async function aiDeepAnalysis(
   domain: string,
   context: {
@@ -227,10 +346,7 @@ export async function aiDeepAnalysis(
   suggestedListPrice: number;
   negotiationFloor: number;
 } | null> {
-  const hasKey = process.env.COMETAPI_API_KEY || process.env.OPENROUTER_API_KEY;
-  if (!hasKey) return null;
-
-  const text = await callAI(
+  const result = await callAI(
     [
       {
         role: "user",
@@ -257,7 +373,7 @@ Return ONLY valid JSON:
     "deep",
   );
 
-  return text
+  return result
     ? parseJSON<{
         investmentThesis: string;
         riskFactors: string[];
@@ -265,6 +381,6 @@ Return ONLY valid JSON:
         comparableSales: string[];
         suggestedListPrice: number;
         negotiationFloor: number;
-      }>(text)
+      }>(result.content)
     : null;
 }
