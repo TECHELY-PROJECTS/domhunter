@@ -2,50 +2,98 @@ import { logger } from "./logger";
 
 const APP_URL = process.env.APP_URL ?? "https://domhunter.techely.com";
 
-function formatValue(v?: number | null) {
-  if (!v) return "—";
-  return v >= 1000 ? `$${(v / 1000).toFixed(1)}K` : `$${v}`;
+function fmt(v?: number | null, prefix = "$"): string {
+  if (v == null || v === 0) return "—";
+  if (v >= 1000) return `${prefix}${(v / 1000).toFixed(1)}K`;
+  return `${prefix}${v}`;
 }
 
-function recEmoji(rec?: string | null) {
-  if (rec === "BUY") return "🟢";
-  if (rec === "WATCH") return "🟡";
+function signal(rec?: string | null): string {
+  if (rec === "BUY")   return "🟢 BUY";
+  if (rec === "WATCH") return "🟡 WATCH";
   return "⚪";
+}
+
+function tierBadge(tier?: string | null): string {
+  if (tier === "legendary") return "🔥 Legendary";
+  if (tier === "epic")      return "💎 Epic";
+  if (tier === "rare")      return "⭐ Rare";
+  if (tier === "uncommon")  return "✓ Uncommon";
+  return "";
+}
+
+export interface DomainAlert {
+  name: string;
+  tld?: string | null;
+  status?: string | null;
+  auctionEndAt?: Date | string | null;
+  currentBid?: number | null;
+  metrics?: {
+    rarityScore?: number | null;
+    brandScore?: number | null;
+    estimatedValue?: number | null;
+    recommendation?: string | null;
+    niche?: string | null;
+    rarityTier?: string | null;
+    domainAuthority?: number | null;
+    backlinks?: number | null;
+    domainAge?: number | null;
+    aiReason?: string | null;
+  } | null;
+}
+
+function daysLeft(endAt?: Date | string | null): string | null {
+  if (!endAt) return null;
+  const diff = Math.round((new Date(endAt).getTime() - Date.now()) / 86400000);
+  if (diff < 0) return "expired";
+  if (diff === 0) return "⚠️ TODAY";
+  if (diff === 1) return "⚠️ 1d left";
+  return `${diff}d left`;
 }
 
 export async function sendTelegramAlert(opts: {
   botToken: string;
   chatId: string;
   alertName: string;
-  domains: Array<{
-    name: string;
-    metrics?: {
-      rarityScore?: number | null;
-      estimatedValue?: number | null;
-      recommendation?: string | null;
-      brandScore?: number | null;
-      niche?: string | null;
-    } | null;
-  }>;
+  domains: DomainAlert[];
 }): Promise<boolean> {
   const { botToken, chatId, alertName, domains } = opts;
 
-  const lines = domains.slice(0, 15).map((d) => {
-    const score = d.metrics?.rarityScore != null ? Math.round(d.metrics.rarityScore) : "—";
-    const val = formatValue(d.metrics?.estimatedValue);
-    const rec = recEmoji(d.metrics?.recommendation);
-    const niche = d.metrics?.niche ? ` · ${d.metrics.niche}` : "";
+  const lines: string[] = [];
+
+  for (const d of domains.slice(0, 12)) {
+    const m = d.metrics;
     const url = `${APP_URL}/domain/${d.name}`;
-    return `${rec} <a href="${url}"><b>${d.name}</b></a>  score ${score} · ${val}${niche}`;
-  });
+    const brand    = m?.brandScore  != null ? `Brand <b>${m.brandScore}</b>` : null;
+    const rarity   = m?.rarityScore != null ? `Rarity ${Math.round(m.rarityScore)}` : null;
+    const value    = m?.estimatedValue ? `💰 <b>${fmt(m.estimatedValue)}</b>` : null;
+    const niche    = m?.niche ? m.niche.charAt(0).toUpperCase() + m.niche.slice(1) : null;
+    const tier     = tierBadge(m?.rarityTier);
+    const da       = m?.domainAuthority ? `DA ${m.domainAuthority}` : null;
+    const age      = m?.domainAge ? `${m.domainAge}yr` : null;
+    const bl       = m?.backlinks ? `${m.backlinks >= 1000 ? (m.backlinks/1000).toFixed(1)+"K" : m.backlinks} links` : null;
+    const sig      = signal(m?.recommendation);
+    const deadline = daysLeft(d.auctionEndAt);
+    const bid      = d.currentBid ? `Current bid: ${fmt(d.currentBid)}` : null;
+    const reason   = m?.aiReason ? `<i>${m.aiReason}</i>` : null;
+
+    const line1 = `${sig}  <a href="${url}"><b>${d.name}</b></a>  ${tier}`;
+    const line2parts = [brand, rarity, value, niche].filter(Boolean);
+    const line3parts = [da, age, bl, deadline ? `⏳ ${deadline}` : null, bid].filter(Boolean);
+
+    lines.push(line1);
+    if (line2parts.length) lines.push(`   ${line2parts.join(" · ")}`);
+    if (line3parts.length) lines.push(`   ${line3parts.join(" · ")}`);
+    if (reason) lines.push(`   ${reason}`);
+    lines.push("");
+  }
 
   const header = [
-    `🎯 <b>DomHunter Alert</b>: ${alertName}`,
-    `${domains.length} new domain${domains.length !== 1 ? "s" : ""} matched your filter\n`,
+    `🎯 <b>DomHunter</b> — ${alertName}`,
+    `<b>${domains.length}</b> domain${domains.length !== 1 ? "s" : ""} matched your filter\n`,
   ].join("\n");
 
-  const footer = `\n<a href="${APP_URL}/explore">Browse all →</a>  ·  <a href="${APP_URL}/alerts">Manage alerts</a>`;
-
+  const footer = `<a href="${APP_URL}/explore">Browse all →</a>  ·  <a href="${APP_URL}/alerts">Manage alerts</a>`;
   const text = header + lines.join("\n") + footer;
 
   try {
@@ -77,7 +125,10 @@ export async function sendTelegramAlert(opts: {
   }
 }
 
-export async function testTelegramConnection(botToken: string, chatId: string): Promise<{ ok: boolean; error?: string }> {
+export async function testTelegramConnection(
+  botToken: string,
+  chatId: string,
+): Promise<{ ok: boolean; error?: string }> {
   try {
     const res = await fetch(
       `https://api.telegram.org/bot${botToken}/sendMessage`,
@@ -86,14 +137,20 @@ export async function testTelegramConnection(botToken: string, chatId: string): 
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           chat_id: chatId,
-          text: "✅ <b>DomHunter</b> — Telegram alerts connected successfully!",
+          text: [
+            "✅ <b>DomHunter</b> — Connection confirmed!",
+            "",
+            "You'll receive daily domain investment alerts here.",
+            `📊 Dashboard: <a href="${APP_URL}/explore">${APP_URL}/explore</a>`,
+          ].join("\n"),
           parse_mode: "HTML",
+          disable_web_page_preview: true,
         }),
       },
     );
 
     if (!res.ok) {
-      const body = await res.json() as { description?: string };
+      const body = (await res.json()) as { description?: string };
       return { ok: false, error: body?.description ?? "Telegram API error" };
     }
 

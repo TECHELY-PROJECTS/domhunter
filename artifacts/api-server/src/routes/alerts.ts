@@ -4,7 +4,8 @@ import { alertsTable, usersTable } from "@workspace/db";
 import { eq, and } from "drizzle-orm";
 import { randomUUID } from "crypto";
 import { z, ZodError } from "zod";
-import { testTelegramConnection } from "../lib/telegram";
+import { testTelegramConnection, sendTelegramAlert } from "../lib/telegram";
+import { runAlerts } from "../lib/cron";
 
 const router: IRouter = Router();
 
@@ -15,11 +16,13 @@ const AlertBody = z.object({
   telegramChatId: z.string().min(1),
   telegramBotToken: z.string().min(1),
   filter: z.object({
-    minScore: z.number().min(0).max(100).optional(),
-    recommendation: z.enum(["BUY", "WATCH", "SKIP"]).optional(),
-    niche: z.string().optional(),
-    tier: z.string().optional(),
-    tlds: z.array(z.string()).optional(),
+    minScore:      z.number().min(0).max(100).optional(),
+    minBrandScore: z.number().min(0).max(100).optional(),
+    minDA:         z.number().min(0).max(100).optional(),
+    recommendation: z.enum(["BUY", "WATCH", "SKIP", "any"]).optional(),
+    niche:  z.string().optional(),
+    tier:   z.string().optional(),
+    tlds:   z.array(z.string()).optional(),
   }).optional().default({}),
 });
 
@@ -88,6 +91,73 @@ router.post("/alerts/test-telegram", async (req, res) => {
   } catch (err) {
     req.log.error({ err }, "Failed to test Telegram");
     res.status(400).json({ ok: false, error: "Invalid request" });
+  }
+});
+
+// Send digest now (for the given alert or all active alerts)
+router.post("/alerts/send-now", async (req, res) => {
+  try {
+    const { alertId } = req.body as { alertId?: string };
+
+    if (alertId) {
+      // Send for one specific alert
+      const alert = await db.query.alertsTable.findFirst({
+        where: and(eq(alertsTable.id, alertId), eq(alertsTable.userId, DEMO_USER_ID)),
+      });
+      if (!alert) return res.status(404).json({ error: "Alert not found" });
+
+      // Fetch all BUY domains with scores for manual send
+      const domains = await db.query.domainsTable.findMany({
+        with: { metrics: true },
+        limit: 100,
+      });
+
+      const topDomains = domains
+        .filter(d => d.metrics?.brandScore != null)
+        .sort((a, b) => (b.metrics?.brandScore ?? 0) - (a.metrics?.brandScore ?? 0))
+        .slice(0, 12)
+        .map(d => ({
+          name: d.name,
+          tld: d.tld,
+          status: d.status,
+          auctionEndAt: d.auctionEndAt,
+          currentBid: d.currentBid,
+          metrics: d.metrics ? {
+            rarityScore:     d.metrics.rarityScore,
+            brandScore:      d.metrics.brandScore,
+            estimatedValue:  d.metrics.estimatedValue,
+            recommendation:  d.metrics.recommendation,
+            niche:           d.metrics.niche,
+            rarityTier:      d.metrics.rarityTier,
+            domainAuthority: d.metrics.domainAuthority,
+            backlinks:       d.metrics.backlinks,
+            domainAge:       d.metrics.domainAge,
+            aiReason:        d.metrics.aiReason,
+          } : null,
+        }));
+
+      const sent = await sendTelegramAlert({
+        botToken: alert.telegramBotToken,
+        chatId: alert.telegramChatId,
+        alertName: alert.name,
+        domains: topDomains,
+      });
+
+      if (sent) {
+        await db.update(alertsTable)
+          .set({ lastSentAt: new Date(), updatedAt: new Date() })
+          .where(eq(alertsTable.id, alert.id));
+      }
+
+      return res.json({ ok: sent, sent: topDomains.length });
+    }
+
+    // Run full digest
+    await runAlerts();
+    res.json({ ok: true, message: "Digest triggered for all active alerts" });
+  } catch (err) {
+    req.log.error({ err }, "Failed to send alert now");
+    res.status(500).json({ error: "Internal server error" });
   }
 });
 

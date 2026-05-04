@@ -9,7 +9,8 @@ import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
-import { Bell, Trash2, Power, Loader2, Plus, Send, ExternalLink, CheckCircle2, XCircle } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Bell, Trash2, Power, Loader2, Plus, Send, ExternalLink, CheckCircle2, XCircle, Zap } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 
@@ -26,6 +27,8 @@ type Alert = {
 
 type AlertFilter = {
   minScore?: number;
+  minBrandScore?: number;
+  minDA?: number;
   recommendation?: string;
   niche?: string;
   tier?: string;
@@ -37,6 +40,8 @@ const formSchema = z.object({
   telegramChatId: z.string().min(1, "Chat ID required"),
   telegramBotToken: z.string().min(1, "Bot token required"),
   minScore: z.number().min(0).max(100),
+  minBrandScore: z.number().min(0).max(100),
+  minDA: z.number().min(0).max(100),
   recommendation: z.string().optional(),
   tier: z.string().optional(),
 });
@@ -73,6 +78,15 @@ async function testTelegram(botToken: string, chatId: string): Promise<{ ok: boo
   return res.json();
 }
 
+async function sendNow(alertId: string): Promise<{ ok: boolean; sent?: number }> {
+  const res = await fetch(`${API_BASE}/alerts/send-now`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ alertId }),
+  });
+  return res.json();
+}
+
 async function toggleAlert(id: string, active: boolean): Promise<Alert> {
   const res = await fetch(`${API_BASE}/alerts/${id}`, {
     method: "PATCH",
@@ -88,57 +102,52 @@ async function deleteAlert(id: string): Promise<void> {
   if (!res.ok) throw new Error("Failed to delete alert");
 }
 
-const TIER_LABELS: Record<string, string> = {
-  legendary: "🔥 Legendary",
-  epic: "💎 Epic",
-  rare: "⭐ Rare",
-  uncommon: "✓ Uncommon",
-};
-
 function maskToken(token: string) {
   if (token.length < 10) return "••••••••";
-  return token.slice(0, 6) + "••••••••" + token.slice(-4);
+  return token.slice(0, 8) + "••••••••" + token.slice(-4);
 }
 
-function AlertCard({ alert, onToggle, onDelete }: {
+function AlertCard({ alert, onToggle, onDelete, onSendNow }: {
   alert: Alert;
   onToggle: (id: string, active: boolean) => void;
   onDelete: (id: string) => void;
+  onSendNow: (id: string) => void;
 }) {
   let filter: AlertFilter = {};
   try { filter = JSON.parse(alert.filterJson); } catch { /* ignore */ }
 
-  const filterChips = [
-    filter.minScore != null && `Score ≥ ${filter.minScore}`,
-    filter.recommendation && filter.recommendation,
-    filter.tier && TIER_LABELS[filter.tier],
-    filter.tlds?.length && filter.tlds.join(", "),
-  ].filter(Boolean);
+  const chips = [
+    filter.minBrandScore != null && filter.minBrandScore > 0 && `Brand ≥ ${filter.minBrandScore}`,
+    filter.minScore      != null && filter.minScore > 0      && `Rarity ≥ ${filter.minScore}`,
+    filter.minDA         != null && filter.minDA > 0         && `DA ≥ ${filter.minDA}`,
+    filter.recommendation && filter.recommendation !== "any" && filter.recommendation,
+    filter.tier          && filter.tier !== "any"            && filter.tier.charAt(0).toUpperCase() + filter.tier.slice(1),
+    filter.tlds?.length  && filter.tlds.join(", "),
+  ].filter(Boolean) as string[];
 
   return (
     <Card className={`transition-all ${!alert.active ? "opacity-50" : ""}`}>
       <CardContent className="pt-5">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2 mb-1">
+            <div className="flex items-center gap-2 mb-1 flex-wrap">
               <span className="font-semibold truncate">{alert.name}</span>
-              {alert.active ? (
-                <span className="text-xs bg-green-900/40 text-green-400 border border-green-700/50 px-1.5 py-0.5 rounded">Active</span>
-              ) : (
-                <span className="text-xs bg-muted text-muted-foreground border border-border px-1.5 py-0.5 rounded">Paused</span>
-              )}
+              {alert.active
+                ? <Badge variant="outline" className="text-xs text-green-400 border-green-700/50 bg-green-900/20">Active</Badge>
+                : <Badge variant="outline" className="text-xs text-muted-foreground">Paused</Badge>
+              }
             </div>
 
             <div className="flex items-center gap-1.5 mb-3">
               <Send className="w-3 h-3 text-blue-400 shrink-0" />
               <span className="text-xs text-muted-foreground font-mono">
-                Chat: {alert.telegramChatId} · Token: {maskToken(alert.telegramBotToken)}
+                Chat: {alert.telegramChatId} · {maskToken(alert.telegramBotToken)}
               </span>
             </div>
 
-            {filterChips.length > 0 && (
+            {chips.length > 0 && (
               <div className="flex flex-wrap gap-1.5 mb-3">
-                {filterChips.map((chip, i) => (
+                {chips.map((chip, i) => (
                   <span key={i} className="text-xs bg-muted border border-border px-2 py-0.5 rounded text-muted-foreground">
                     {chip}
                   </span>
@@ -154,6 +163,13 @@ function AlertCard({ alert, onToggle, onDelete }: {
           </div>
 
           <div className="flex items-center gap-1 shrink-0">
+            <button
+              onClick={() => onSendNow(alert.id)}
+              title="Send digest now"
+              className="p-2 rounded-md text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors"
+            >
+              <Zap className="w-4 h-4" />
+            </button>
             <button
               onClick={() => onToggle(alert.id, !alert.active)}
               title={alert.active ? "Pause alert" : "Resume alert"}
@@ -214,9 +230,27 @@ export default function Alerts() {
     onError: () => toast({ title: "Failed to delete alert", variant: "destructive" }),
   });
 
+  const sendNowMut = useMutation({
+    mutationFn: sendNow,
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["alerts"] });
+      toast({ title: "Digest sent!", description: `${data.sent ?? 0} domains sent to Telegram.` });
+    },
+    onError: () => toast({ title: "Failed to send digest", variant: "destructive" }),
+  });
+
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
-    defaultValues: { name: "", telegramChatId: "", telegramBotToken: "", minScore: 60, recommendation: "any", tier: "any" },
+    defaultValues: {
+      name: "",
+      telegramChatId: "",
+      telegramBotToken: "",
+      minScore: 55,
+      minBrandScore: 65,
+      minDA: 0,
+      recommendation: "BUY",
+      tier: "any",
+    },
   });
 
   const onTest = async () => {
@@ -238,7 +272,10 @@ export default function Alerts() {
   };
 
   const onSubmit = (values: z.infer<typeof formSchema>) => {
-    const filter: AlertFilter = { minScore: values.minScore };
+    const filter: AlertFilter = {};
+    if (values.minScore > 0)      filter.minScore      = values.minScore;
+    if (values.minBrandScore > 0) filter.minBrandScore = values.minBrandScore;
+    if (values.minDA > 0)         filter.minDA         = values.minDA;
     if (values.recommendation && values.recommendation !== "any") filter.recommendation = values.recommendation;
     if (values.tier && values.tier !== "any") filter.tier = values.tier;
     createMut.mutate({
@@ -252,12 +289,11 @@ export default function Alerts() {
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500 max-w-3xl mx-auto">
 
-      {/* Header */}
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Domain Alerts</h1>
           <p className="text-muted-foreground mt-1">
-            Get instant Telegram messages when new domains match your filters.
+            Daily Telegram digest of domains matching your investment criteria.
           </p>
         </div>
         <Button onClick={() => { setShowForm((v) => !v); setTestStatus("idle"); }} className="gap-2">
@@ -274,8 +310,9 @@ export default function Alerts() {
         </div>
         <ol className="list-decimal list-inside space-y-1 text-blue-300/80 text-xs ml-1">
           <li>Message <span className="font-mono bg-blue-900/40 px-1 rounded">@BotFather</span> on Telegram → create a new bot → copy the <strong>Bot Token</strong></li>
-          <li>Start a chat with your bot, then get your <strong>Chat ID</strong> by messaging <span className="font-mono bg-blue-900/40 px-1 rounded">@userinfobot</span></li>
-          <li>Paste both below, test the connection, then save your alert</li>
+          <li>Open your bot and press <strong>Start</strong> — this is required before any message can be sent</li>
+          <li>Get your <strong>Chat ID</strong> by messaging <span className="font-mono bg-blue-900/40 px-1 rounded">@userinfobot</span></li>
+          <li>Paste both below, click <strong>Test Connection</strong>, then save</li>
         </ol>
         <a
           href="https://core.telegram.org/bots#how-do-i-create-a-bot"
@@ -292,7 +329,7 @@ export default function Alerts() {
         <Card className="border-primary/30 bg-primary/5">
           <CardHeader className="pb-3">
             <CardTitle className="text-lg">Create New Alert</CardTitle>
-            <CardDescription>Receive a Telegram message daily when new domains match these criteria.</CardDescription>
+            <CardDescription>Receive a daily Telegram digest of domains matching these filters.</CardDescription>
           </CardHeader>
           <CardContent>
             <Form {...form}>
@@ -301,7 +338,7 @@ export default function Alerts() {
                 <FormField control={form.control} name="name" render={({ field }) => (
                   <FormItem>
                     <FormLabel>Alert Name</FormLabel>
-                    <FormControl><Input placeholder="e.g. High-score .com BUYs" {...field} /></FormControl>
+                    <FormControl><Input placeholder="e.g. Premium Flips" {...field} /></FormControl>
                     <FormMessage />
                   </FormItem>
                 )} />
@@ -321,7 +358,7 @@ export default function Alerts() {
                   <FormField control={form.control} name="telegramChatId" render={({ field }) => (
                     <FormItem>
                       <FormLabel>Chat ID</FormLabel>
-                      <FormControl><Input placeholder="-100123456789 or 123456789" {...field} /></FormControl>
+                      <FormControl><Input placeholder="751790753" {...field} /></FormControl>
                       <FormDescription className="text-xs">From @userinfobot</FormDescription>
                       <FormMessage />
                     </FormItem>
@@ -340,32 +377,52 @@ export default function Alerts() {
                   )}
                   {testStatus === "error" && (
                     <span className="flex items-center gap-1.5 text-sm text-red-400">
-                      <XCircle className="w-4 h-4" /> {testError || "Connection failed"}
+                      <XCircle className="w-4 h-4" /> {testError || "Connection failed — did you press Start in the bot?"}
                     </span>
                   )}
                 </div>
 
                 <Separator />
-                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Filters</p>
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Investment Filters</p>
 
-                <FormField control={form.control} name="minScore" render={({ field }) => (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                  <FormField control={form.control} name="minBrandScore" render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Min Brand Score — <span className="text-primary font-mono">{field.value}</span></FormLabel>
+                      <FormControl>
+                        <Slider min={0} max={100} step={5} value={[field.value]}
+                          onValueChange={([v]) => field.onChange(v)} className="mt-2" />
+                      </FormControl>
+                      <FormDescription className="text-xs">AI brandability score (0–100). 75+ recommended for flips.</FormDescription>
+                    </FormItem>
+                  )} />
+                  <FormField control={form.control} name="minScore" render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Min Rarity Score — <span className="text-primary font-mono">{field.value}</span></FormLabel>
+                      <FormControl>
+                        <Slider min={0} max={100} step={5} value={[field.value]}
+                          onValueChange={([v]) => field.onChange(v)} className="mt-2" />
+                      </FormControl>
+                      <FormDescription className="text-xs">Domain rarity + length score. 60+ = Rare tier.</FormDescription>
+                    </FormItem>
+                  )} />
+                </div>
+
+                <FormField control={form.control} name="minDA" render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Minimum Rarity Score — <span className="text-primary font-mono">{field.value}</span></FormLabel>
+                    <FormLabel>Min Domain Authority — <span className="text-primary font-mono">{field.value === 0 ? "Any" : field.value}</span></FormLabel>
                     <FormControl>
-                      <Slider
-                        min={0} max={100} step={5}
-                        value={[field.value]}
-                        onValueChange={([v]) => field.onChange(v)}
-                        className="mt-2"
-                      />
+                      <Slider min={0} max={60} step={5} value={[field.value]}
+                        onValueChange={([v]) => field.onChange(v)} className="mt-2" />
                     </FormControl>
+                    <FormDescription className="text-xs">Minimum OpenPageRank DA. Set to 0 to include domains with no DA data.</FormDescription>
                   </FormItem>
                 )} />
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <FormField control={form.control} name="recommendation" render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Signal</FormLabel>
+                      <FormLabel>AI Signal</FormLabel>
                       <Select value={field.value} onValueChange={field.onChange}>
                         <FormControl><SelectTrigger><SelectValue placeholder="Any signal" /></SelectTrigger></FormControl>
                         <SelectContent>
@@ -405,7 +462,7 @@ export default function Alerts() {
       {/* Alert list */}
       {isLoading ? (
         <div className="space-y-3">
-          {[1, 2].map((i) => (
+          {[1, 2, 3].map((i) => (
             <Card key={i} className="animate-pulse">
               <CardContent className="pt-5 space-y-2">
                 <div className="h-5 bg-muted rounded w-40" />
@@ -422,7 +479,7 @@ export default function Alerts() {
         <div className="text-center py-16 border border-dashed border-border rounded-xl bg-card/30">
           <Send className="w-8 h-8 text-muted-foreground/30 mx-auto mb-3" />
           <p className="text-muted-foreground font-medium mb-1">No alerts yet</p>
-          <p className="text-muted-foreground/60 text-sm mb-5">Create an alert to get instant Telegram messages for matching domains.</p>
+          <p className="text-muted-foreground/60 text-sm mb-5">Create an alert to get daily Telegram digests for matching domains.</p>
           <Button onClick={() => setShowForm(true)} className="gap-2">
             <Plus className="w-4 h-4" /> Create Your First Alert
           </Button>
@@ -435,6 +492,7 @@ export default function Alerts() {
               alert={alert}
               onToggle={(id, active) => toggleMut.mutate({ id, active })}
               onDelete={(id) => deleteMut.mutate(id)}
+              onSendNow={(id) => sendNowMut.mutate(id)}
             />
           ))}
         </div>

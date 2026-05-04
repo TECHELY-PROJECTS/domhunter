@@ -3,6 +3,7 @@ import { db } from "@workspace/db";
 import { alertsTable, domainsTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { sendTelegramAlert } from "./telegram";
+import type { DomainAlert } from "./telegram";
 
 const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
 const ONE_MIN_MS = 60 * 1000;
@@ -24,7 +25,7 @@ async function runIngest(): Promise<void> {
     const res = await fetch(`http://localhost:${port}/api/ingest`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ source: "godaddy" }),
+      body: JSON.stringify({ source: "expired_domains" }),
     });
     const data = (await res.json()) as { ingested?: number };
     logger.info({ ingested: data?.ingested }, "Scheduled ingest complete");
@@ -32,6 +33,16 @@ async function runIngest(): Promise<void> {
   } catch (err) {
     logger.error({ err }, "Scheduled ingest failed");
   }
+}
+
+interface AlertFilter {
+  minScore?: number;
+  minBrandScore?: number;
+  minDA?: number;
+  recommendation?: string;
+  niche?: string;
+  tier?: string;
+  tlds?: string[];
 }
 
 async function runAlerts(): Promise<void> {
@@ -46,19 +57,15 @@ async function runAlerts(): Promise<void> {
 
     if (alerts.length === 0) return;
 
-    const since = new Date(Date.now() - SIX_HOURS_MS * 4); // last 24h
+    // Pull last 24h of domains with full metrics
+    const since = new Date(Date.now() - SIX_HOURS_MS * 4);
 
     let totalSent = 0;
+
     for (const alert of alerts) {
-      let filter: {
-        minScore?: number;
-        recommendation?: string;
-        niche?: string;
-        tier?: string;
-        tlds?: string[];
-      } = {};
+      let filter: AlertFilter = {};
       try {
-        filter = JSON.parse(alert.filterJson);
+        filter = JSON.parse(alert.filterJson) as AlertFilter;
       } catch {
         // ignore malformed
       }
@@ -71,36 +78,53 @@ async function runAlerts(): Promise<void> {
       const matched = domainRows.filter((d) => {
         const m = d.metrics;
         if (!m) return false;
-        if (filter.minScore != null && (m.rarityScore ?? 0) < filter.minScore) return false;
-        if (filter.recommendation && m.recommendation !== filter.recommendation) return false;
-        if (filter.niche && m.niche !== filter.niche) return false;
-        if (filter.tier && m.rarityTier !== filter.tier) return false;
+        if (filter.minScore      != null && (m.rarityScore      ?? 0) < filter.minScore)      return false;
+        if (filter.minBrandScore != null && (m.brandScore       ?? 0) < filter.minBrandScore) return false;
+        if (filter.minDA         != null && (m.domainAuthority  ?? 0) < filter.minDA)         return false;
+        if (filter.recommendation && filter.recommendation !== "any" && m.recommendation !== filter.recommendation) return false;
+        if (filter.niche         && filter.niche !== "any"  && m.niche      !== filter.niche)        return false;
+        if (filter.tier          && filter.tier  !== "any"  && m.rarityTier !== filter.tier)         return false;
         if (filter.tlds && filter.tlds.length > 0 && !filter.tlds.includes(d.tld)) return false;
         return true;
       });
 
       if (matched.length === 0) continue;
 
-      const top15 = matched
-        .sort((a, b) => (b.metrics?.rarityScore ?? 0) - (a.metrics?.rarityScore ?? 0))
-        .slice(0, 15);
+      // Sort: BUY-only alerts → brand score desc; otherwise rarity desc
+      const sorted = matched.sort((a, b) => {
+        if (filter.recommendation === "BUY") {
+          return (b.metrics?.brandScore ?? 0) - (a.metrics?.brandScore ?? 0);
+        }
+        return (b.metrics?.rarityScore ?? 0) - (a.metrics?.rarityScore ?? 0);
+      });
+
+      const top12: DomainAlert[] = sorted.slice(0, 12).map((d) => ({
+        name: d.name,
+        tld: d.tld,
+        status: d.status,
+        auctionEndAt: d.auctionEndAt,
+        currentBid: d.currentBid,
+        metrics: d.metrics
+          ? {
+              rarityScore:     d.metrics.rarityScore,
+              brandScore:      d.metrics.brandScore,
+              estimatedValue:  d.metrics.estimatedValue,
+              recommendation:  d.metrics.recommendation,
+              niche:           d.metrics.niche,
+              rarityTier:      d.metrics.rarityTier,
+              domainAuthority: d.metrics.domainAuthority,
+              backlinks:       d.metrics.backlinks,
+              domainAge:       d.metrics.domainAge,
+              aiReason:        d.metrics.aiReason,
+            }
+          : null,
+      }));
 
       const sent = await sendTelegramAlert({
         botToken: alert.telegramBotToken,
         chatId: alert.telegramChatId,
         alertName: alert.name,
-        domains: top15.map((d) => ({
-          name: d.name,
-          metrics: d.metrics
-            ? {
-                rarityScore: d.metrics.rarityScore,
-                estimatedValue: d.metrics.estimatedValue,
-                recommendation: d.metrics.recommendation,
-                brandScore: d.metrics.brandScore,
-                niche: d.metrics.niche,
-              }
-            : null,
-        })),
+        domains: top12,
       });
 
       if (sent) {
@@ -137,3 +161,6 @@ export function startCron(): void {
     "Cron scheduler started (ingest every 6h, Telegram alerts daily at configured UTC hour)",
   );
 }
+
+// Exported for on-demand use (e.g. POST /api/alerts/send-now)
+export { runAlerts };
