@@ -34,9 +34,9 @@ export default function Portfolio() {
   const { toast } = useToast();
   const [, navigate] = useLocation();
 
-  const handleRemove = (id: string, domainName: string, e: React.MouseEvent) => {
+  const handleRemove = (domainId: string, domainName: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    removeWatchlist.mutate({ id }, {
+    removeWatchlist.mutate({ domainId }, {
       onSuccess: () => {
         queryClient.invalidateQueries({ queryKey: getGetWatchlistQueryKey() });
         toast({ title: `Removed ${domainName} from watchlist` });
@@ -201,7 +201,7 @@ export default function Portfolio() {
 
                         <TableCell className="py-3" onClick={(e) => e.stopPropagation()}>
                           <button
-                            onClick={(e) => handleRemove(item.id, d.name, e)}
+                            onClick={(e) => handleRemove(item.domainId, d.name, e)}
                             disabled={removeWatchlist.isPending}
                             className="text-xs text-muted-foreground hover:text-destructive transition-colors px-2 py-1 rounded hover:bg-destructive/10 disabled:opacity-50"
                           >

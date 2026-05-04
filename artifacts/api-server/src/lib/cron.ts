@@ -43,21 +43,19 @@ export interface AlertFilter {
   minBrandScore?: number;
   minDA?: number;
   maxBid?: number;
-  maxDaysToExpiry?: number;   // for "dropping soon" alerts — e.g. 15
-  minDaysToExpiry?: number;   // lower bound on expiry window
+  maxDaysToExpiry?: number;
+  minDaysToExpiry?: number;
+  maxSldLength?: number;        // max characters in SLD, e.g. 12
+  watchDomain?: string;         // watch a specific domain until it drops
   recommendation?: string;
   niche?: string;
   tier?: string;
   tlds?: string[];
-  // "cheap"   = EXPIRED/AVAILABLE/EXPIRING only (default)
-  // "any"     = include AUCTION too
-  // "auction" = auction only
-  // "dropping"= EXPIRING with expires_date within maxDaysToExpiry days
   statusMode?: "cheap" | "any" | "auction" | "dropping";
 }
 
 export function matchesFilter(
-  d: { tld: string; status: string; currentBid?: number | null },
+  d: { name?: string; sld?: string; tld: string; status: string; currentBid?: number | null },
   m: {
     rarityScore?: number | null;
     brandScore?: number | null;
@@ -71,6 +69,19 @@ export function matchesFilter(
 ): boolean {
   if (!m) return false;
 
+  // ── watchDomain: specific domain drop watch ────────────────────────────────
+  if (filter.watchDomain) {
+    // Only alert when this specific domain becomes cheap (dropped)
+    const statusUpper = (d.status ?? "").toUpperCase();
+    return d.name === filter.watchDomain && CHEAP_STATUSES.has(statusUpper);
+  }
+
+  // ── SLD length guard ───────────────────────────────────────────────────────
+  if (filter.maxSldLength != null) {
+    const sldLen = (d.sld ?? d.name?.split(".")[0] ?? "").length;
+    if (sldLen > filter.maxSldLength) return false;
+  }
+
   const mode = filter.statusMode ?? "cheap";
   const statusUpper = (d.status ?? "").toUpperCase();
 
@@ -79,19 +90,16 @@ export function matchesFilter(
   } else if (mode === "auction") {
     if (statusUpper !== "AUCTION") return false;
   } else if (mode === "dropping") {
-    // Must be EXPIRING AND have a known expiry date within window
     if (statusUpper !== "EXPIRING") return false;
     const expiresDate = m.expiresDate ? new Date(m.expiresDate) : null;
     if (!expiresDate) return false;
     const daysLeft = (expiresDate.getTime() - Date.now()) / 86_400_000;
-    if (daysLeft < 0) return false; // already past — should be EXPIRED by now
-    const maxDays = filter.maxDaysToExpiry ?? 15;
+    if (daysLeft < 0) return false;
+    const maxDays = filter.maxDaysToExpiry ?? 3;
     const minDays = filter.minDaysToExpiry ?? 0;
     if (daysLeft > maxDays || daysLeft < minDays) return false;
   }
-  // mode === "any" → no status restriction
 
-  // Budget guard — default $20 for cheap/dropping modes
   const maxBid = filter.maxBid ?? (mode === "cheap" || mode === "dropping" ? 20 : undefined);
   if (maxBid != null && d.currentBid != null && d.currentBid > maxBid) return false;
 
@@ -136,10 +144,8 @@ async function runAlerts(): Promise<void> {
 
       const matched = domainRows.filter((d) =>
         matchesFilter(
-          { tld: d.tld, status: d.status ?? "", currentBid: d.currentBid },
-          d.metrics
-            ? { ...d.metrics, expiresDate: d.metrics.expiresDate }
-            : null,
+          { name: d.name, sld: d.sld, tld: d.tld, status: d.status ?? "", currentBid: d.currentBid },
+          d.metrics ?? null,
           filter,
         )
       );

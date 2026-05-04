@@ -12,7 +12,7 @@ import { useQueryClient, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
-import { ExternalLink, Star, Zap, RefreshCw, Archive } from "lucide-react";
+import { ExternalLink, Star, Zap, RefreshCw, Archive, Bell } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 interface EnrichResult {
@@ -165,12 +165,35 @@ export default function DomainDetail() {
   const removeWatchlist = useRemoveFromWatchlist();
   const enrich = useEnrichDomain(fqdn || "");
 
+  const [watchingAlert, setWatchingAlert] = useState(false);
+  const handleWatchDrop = async () => {
+    if (!fqdn) return;
+    setWatchingAlert(true);
+    try {
+      const res = await fetch("/api/alerts/watch-domain", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ domainName: fqdn }),
+      });
+      const data = await res.json() as { ok?: boolean; message?: string; error?: string };
+      if (!res.ok) {
+        toast({ title: "Could not set alert", description: data.error, variant: "destructive" });
+      } else if (data.message === "Already watching") {
+        toast({ title: `Already watching ${fqdn}`, description: "You'll be alerted when it drops." });
+      } else {
+        toast({ title: `🔔 Alert set for ${fqdn}`, description: "You'll get a Telegram alert when it drops." });
+      }
+    } finally {
+      setWatchingAlert(false);
+    }
+  };
+
   const handleToggleWatchlist = () => {
     if (!domain) return;
     if (isWatched) {
       const item = watchlist?.find((w) => w.domain.name === fqdn);
       if (item) {
-        removeWatchlist.mutate({ id: item.id }, {
+        removeWatchlist.mutate({ domainId: item.domainId }, {
           onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: getGetWatchlistQueryKey() });
             toast({ title: "Removed from watchlist" });
@@ -318,6 +341,19 @@ export default function DomainDetail() {
             <Star className={`w-3.5 h-3.5 ${isWatched ? "fill-current" : ""}`} />
             {isWatched ? "Watched" : "Watch"}
           </Button>
+          {domain?.status === "EXPIRING" && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleWatchDrop}
+              disabled={watchingAlert}
+              className="gap-2 border-amber-500/40 text-amber-400 hover:bg-amber-400/10 hover:text-amber-300"
+              data-testid="button-watch-drop"
+            >
+              <Bell className="w-3.5 h-3.5" />
+              {watchingAlert ? "Setting..." : "Alert Me When Available"}
+            </Button>
+          )}
         </div>
       </div>
 

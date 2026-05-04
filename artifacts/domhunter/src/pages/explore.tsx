@@ -9,6 +9,8 @@ import { Slider } from "@/components/ui/slider";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
+import { Bell } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
 
 const TIER_STYLES: Record<string, string> = {
   legendary: "bg-yellow-400 text-yellow-900 font-bold",
@@ -46,13 +48,26 @@ const DEFAULT_FILTERS = {
 
 const LIMIT = 50;
 
+async function watchDomain(domainName: string): Promise<{ ok: boolean; message?: string }> {
+  const res = await fetch("/api/alerts/watch-domain", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ domainName }),
+  });
+  const data = await res.json() as { ok?: boolean; message?: string; error?: string };
+  if (!res.ok) return { ok: false, message: data.error };
+  return { ok: true, message: data.message };
+}
+
 export default function Explore() {
   const [, navigate] = useLocation();
+  const { toast } = useToast();
   const [domains, setDomains] = useState<any[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
   const [filters, setFilters] = useState(DEFAULT_FILTERS);
+  const [watchingDomain, setWatchingDomain] = useState<string | null>(null);
 
   const fetchDomains = useCallback(async () => {
     setLoading(true);
@@ -81,6 +96,23 @@ export default function Explore() {
   }, [page, filters]);
 
   useEffect(() => { fetchDomains(); }, [fetchDomains]);
+
+  const handleWatchDrop = async (e: React.MouseEvent, domainName: string) => {
+    e.stopPropagation();
+    setWatchingDomain(domainName);
+    try {
+      const result = await watchDomain(domainName);
+      if (!result.ok) {
+        toast({ title: "Could not set alert", description: result.message, variant: "destructive" });
+      } else if (result.message === "Already watching") {
+        toast({ title: `Already watching ${domainName}`, description: "You'll be alerted when it drops." });
+      } else {
+        toast({ title: `🔔 Alert set for ${domainName}`, description: "You'll get a Telegram alert when it drops." });
+      }
+    } finally {
+      setWatchingDomain(null);
+    }
+  };
 
   const setFilter = (key: string, value: any) => {
     setPage(1);
@@ -309,13 +341,14 @@ export default function Explore() {
                 <TableHead className="w-18 text-center text-xs">Signal</TableHead>
                 <TableHead className="w-22 text-center text-xs">Expires</TableHead>
                 <TableHead className="w-16 text-center text-xs">Buy</TableHead>
+                <TableHead className="w-14 text-center text-xs">Alert</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {loading
                 ? Array(15).fill(0).map((_, i) => (
                     <TableRow key={i} className="border-border">
-                      {Array(12).fill(0).map((_, j) => (
+                      {Array(13).fill(0).map((_, j) => (
                         <TableCell key={j}>
                           <div className="h-4 bg-muted rounded animate-pulse" />
                         </TableCell>
@@ -325,7 +358,7 @@ export default function Explore() {
                 : domains.length === 0
                   ? (
                     <TableRow>
-                      <TableCell colSpan={12} className="h-48 text-center text-muted-foreground">
+                      <TableCell colSpan={13} className="h-48 text-center text-muted-foreground">
                         No domains match your filters. Try adjusting the criteria.
                       </TableCell>
                     </TableRow>
@@ -412,6 +445,20 @@ export default function Explore() {
                         >
                           Buy →
                         </a>
+                      </TableCell>
+                      <TableCell className="text-center py-2.5" onClick={e => e.stopPropagation()}>
+                        {d.status === "EXPIRING" ? (
+                          <button
+                            onClick={(e) => handleWatchDrop(e, d.name)}
+                            disabled={watchingDomain === d.name}
+                            title="Get alerted when this domain drops"
+                            className="inline-flex items-center justify-center w-7 h-7 rounded text-amber-400 hover:bg-amber-400/10 transition-colors disabled:opacity-50"
+                          >
+                            <Bell className="w-3.5 h-3.5" />
+                          </button>
+                        ) : (
+                          <span className="text-muted-foreground/30">—</span>
+                        )}
                       </TableCell>
                     </TableRow>
                   ))

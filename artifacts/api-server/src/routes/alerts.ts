@@ -23,6 +23,8 @@ const AlertBody = z.object({
     maxBid:          z.number().min(0).optional(),
     maxDaysToExpiry: z.number().min(0).optional(),
     minDaysToExpiry: z.number().min(0).optional(),
+    maxSldLength:    z.number().min(1).optional(),
+    watchDomain:     z.string().optional(),
     recommendation:  z.enum(["BUY", "WATCH", "SKIP", "any"]).optional(),
     niche:           z.string().optional(),
     tier:            z.string().optional(),
@@ -120,7 +122,7 @@ router.post("/alerts/send-now", async (req, res) => {
 
       const matched = allDomains.filter((d) =>
         matchesFilter(
-          { tld: d.tld, status: d.status ?? "", currentBid: d.currentBid },
+          { name: d.name, sld: d.sld, tld: d.tld, status: d.status ?? "", currentBid: d.currentBid },
           d.metrics,
           filter,
         )
@@ -153,6 +155,7 @@ router.post("/alerts/send-now", async (req, res) => {
           domainAuthority: d.metrics.domainAuthority,
           backlinks:       d.metrics.backlinks,
           domainAge:       d.metrics.domainAge,
+          expiresDate:     d.metrics.expiresDate,
           aiReason:        d.metrics.aiReason,
         } : null,
       }));
@@ -178,6 +181,50 @@ router.post("/alerts/send-now", async (req, res) => {
     res.json({ ok: true, message: "Digest triggered for all active alerts" });
   } catch (err) {
     req.log.error({ err }, "Failed to send alert now");
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// Create a domain-specific drop watch — reuses bot config from an existing active alert
+router.post("/alerts/watch-domain", async (req, res) => {
+  try {
+    const { domainName } = z.object({ domainName: z.string().min(1) }).parse(req.body);
+
+    // Check if a watch already exists for this domain
+    const existing = await db.query.alertsTable.findFirst({
+      where: and(
+        eq(alertsTable.userId, DEMO_USER_ID),
+        eq(alertsTable.name, `🔔 ${domainName} drops`),
+      ),
+    });
+    if (existing) {
+      return res.status(200).json({ ok: true, message: "Already watching", alert: existing });
+    }
+
+    // Reuse bot token / chat ID from first active alert
+    const source = await db.query.alertsTable.findFirst({
+      where: and(eq(alertsTable.userId, DEMO_USER_ID), eq(alertsTable.active, true)),
+    });
+    if (!source) {
+      return res.status(400).json({ error: "No active Telegram alert found. Set one up in Alerts first." });
+    }
+
+    const [alert] = await db
+      .insert(alertsTable)
+      .values({
+        id: randomUUID(),
+        userId: DEMO_USER_ID,
+        name: `🔔 ${domainName} drops`,
+        telegramChatId: source.telegramChatId,
+        telegramBotToken: source.telegramBotToken,
+        filterJson: JSON.stringify({ watchDomain: domainName, statusMode: "cheap", maxBid: 20 }),
+        active: true,
+      })
+      .returning();
+
+    res.status(201).json({ ok: true, alert });
+  } catch (err) {
+    req.log.error({ err }, "Failed to create domain watch alert");
     res.status(500).json({ error: "Internal server error" });
   }
 });

@@ -40,11 +40,14 @@ function acquisitionLine(
 
   if (s === "EXPIRING") {
     if (expiresDate) {
-      const daysLeft = Math.round((new Date(expiresDate).getTime() - Date.now()) / 86_400_000);
+      const expDate = new Date(expiresDate);
+      const daysLeft = Math.round((expDate.getTime() - Date.now()) / 86_400_000);
+      const dateStr = expDate.toLocaleDateString("en-US", { month: "short", day: "numeric" });
       if (daysLeft <= 0)  return "✅ Just dropped — register at standard price (~$12/yr)";
-      if (daysLeft <= 7)  return `⚠️ Drops in ${daysLeft}d — backorder NOW before it's gone`;
-      if (daysLeft <= 30) return `⏳ Drops in ${daysLeft}d — backorder to catch the drop`;
-      return `📅 Expires in ${daysLeft}d — monitor, don't buy yet`;
+      if (daysLeft <= 3)  return `⏱ Drops ${dateStr} (${daysLeft}d) — backorder NOW!`;
+      if (daysLeft <= 7)  return `⏱ Drops ${dateStr} (${daysLeft}d) — backorder before it's gone`;
+      if (daysLeft <= 30) return `⏱ Expires ${dateStr} (${daysLeft}d) — backorder to catch the drop`;
+      return `📅 Expires ${dateStr} — monitor, don't buy yet`;
     }
     return "⏳ Expiring soon — backorder recommended";
   }
