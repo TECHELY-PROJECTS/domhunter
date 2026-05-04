@@ -1,4 +1,4 @@
-import { useGetDomainStats, useGetRecentDomains, useGetTopScoringDomains, useGetExpiringSoonDomains, useTriggerIngest } from "@workspace/api-client-react";
+import { useGetDomainStats, useGetRecentDomains, useGetTopScoringDomains, useGetExpiringSoonDomains } from "@workspace/api-client-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Link } from "wouter";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -14,23 +14,36 @@ export default function Home() {
   const { data: topScoring, isLoading: topScoringLoading, refetch: refetchTop } = useGetTopScoringDomains({ limit: 5 });
   const { data: expiring, isLoading: expiringLoading, refetch: refetchExpiring } = useGetExpiringSoonDomains({ limit: 5 });
 
-  const triggerIngest = useTriggerIngest();
   const { toast } = useToast();
   const [brandableLoading, setBrandableLoading] = useState(false);
 
   const refetchAll = () => { refetchStats(); refetchRecent(); refetchTop(); refetchExpiring(); };
 
-  const handleIngest = () => {
-    triggerIngest.mutate({ data: { source: "expired_domains" as const } }, {
-      onSuccess: (data: any) => {
-        const msg = data?.message ?? "Fetching new expired domains across .com/.io/.net/.co...";
-        toast({ title: "Sync Complete", description: msg });
+  const handleIngest = async () => {
+    try {
+      const res = await fetch("/api/ingest", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ source: "expired_domains" }),
+      });
+      const data = await res.json() as { message?: string; error?: string };
+      if (!res.ok) {
+        const detail = data.error ?? "Unknown error";
+        const isSessionMissing = detail.toLowerCase().includes("expireddomains_session");
+        toast({
+          title: "Sync Failed",
+          description: isSessionMissing
+            ? "EXPIREDDOMAINS_SESSION cookie not set. Add it in your Render environment variables."
+            : detail,
+          variant: "destructive",
+        });
+      } else {
+        toast({ title: "Sync Complete", description: data.message ?? "Domains fetched." });
         refetchAll();
-      },
-      onError: () => {
-        toast({ title: "Sync Failed", description: "Could not connect to expireddomains.net", variant: "destructive" });
-      },
-    });
+      }
+    } catch {
+      toast({ title: "Sync Failed", description: "Network error — check server is running.", variant: "destructive" });
+    }
   };
 
   const handleBrandable = async () => {
