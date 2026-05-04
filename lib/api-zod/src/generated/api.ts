@@ -521,6 +521,6 @@ export const triggerIngestBodySourceDefault = `sample`;
 
 export const TriggerIngestBody = zod.object({
   source: zod
-    .enum(["godaddy", "namejet", "expired_domains", "icann", "sample"])
+    .enum(["godaddy", "namejet", "expired_domains", "icann", "sample", "brandable"])
     .default(triggerIngestBodySourceDefault),
 });

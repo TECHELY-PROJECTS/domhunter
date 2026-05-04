@@ -14,6 +14,7 @@ import type { DomainFeedItem } from "../lib/sources/types";
 import { fetchGoDaddyRSS } from "../lib/sources/godaddy-rss";
 import { fetchNameJetRSS } from "../lib/sources/namejet-rss";
 import { fetchExpiredDomainsScrape } from "../lib/sources/expireddomains";
+import { generateBrandableDomains } from "../lib/sources/brandable-generator";
 import {
   getICANNAuthToken,
   downloadComZoneFile,
@@ -239,12 +240,34 @@ router.post("/ingest", async (req, res) => {
           error: "EXPIREDDOMAINS_SESSION environment variable is not set. Obtain a session cookie from expireddomains.net and set it.",
         });
       }
-      req.log.info("Scraping expireddomains.net...");
-      const items = await fetchExpiredDomainsScrape(sessionCookie, 5);
+      // Rotate the page offset each sync so we always get a fresh slice
+      const stored = await db.query.domainsTable.findMany({ columns: { name: true } });
+      const existingCount = stored.length;
+      // Roughly: we already have ~N domains, start from page N/25 on .com list
+      const pageOffset = Math.floor(existingCount / 25) % 40; // cap at page 40 then cycle
+      req.log.info({ pageOffset }, "Scraping expireddomains.net (multi-TLD)...");
+      const items = await fetchExpiredDomainsScrape(sessionCookie, 4, pageOffset, ["com", "io", "net", "co"]);
       req.log.info({ count: items.length }, "ExpiredDomains scraped");
       const { count: inserted, newNames } = await persistFeedItems(items, "EXPIRED");
       await queueDomainEnrichment(newNames.slice(0, 500));
-      return res.status(202).json({ message: `Ingested ${inserted} new domains from expireddomains.net (${items.length} scraped)`, queued: newNames.length });
+      return res.status(202).json({ message: `Ingested ${inserted} new domains from expireddomains.net (${items.length} scraped across .com/.io/.net/.co)`, queued: newNames.length });
+    }
+
+    if (source === "brandable") {
+      req.log.info("Generating AI brandable domain names...");
+      if (!process.env.OPENROUTER_API_KEY && !process.env.COMETAPI_API_KEY) {
+        return res.status(400).json({ error: "No AI API key configured (OPENROUTER_API_KEY or COMETAPI_API_KEY)." });
+      }
+      const result = await generateBrandableDomains();
+      req.log.info({ generated: result.generated, available: result.available }, "Brandable generation complete");
+      const { count: inserted, newNames } = await persistFeedItems(result.items, "AVAILABLE");
+      await queueDomainEnrichment(newNames.slice(0, 100));
+      return res.status(202).json({
+        message: `Generated ${result.generated} names → ${result.available} available → ${inserted} new added`,
+        generated: result.generated,
+        available: result.available,
+        inserted,
+      });
     }
 
     if (source === "icann") {

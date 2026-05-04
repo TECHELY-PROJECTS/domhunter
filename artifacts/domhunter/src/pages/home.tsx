@@ -5,7 +5,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
-import { RefreshCw } from "lucide-react";
+import { RefreshCw, Sparkles } from "lucide-react";
+import { useState } from "react";
 
 export default function Home() {
   const { data: stats, isLoading: statsLoading, refetch: refetchStats } = useGetDomainStats();
@@ -15,30 +16,68 @@ export default function Home() {
 
   const triggerIngest = useTriggerIngest();
   const { toast } = useToast();
+  const [brandableLoading, setBrandableLoading] = useState(false);
+
+  const refetchAll = () => { refetchStats(); refetchRecent(); refetchTop(); refetchExpiring(); };
 
   const handleIngest = () => {
-    triggerIngest.mutate({ data: { source: "godaddy" as const } }, {
-      onSuccess: () => {
-        toast({ title: "Ingestion Triggered", description: "Fetching new domains..." });
-        refetchStats();
-        refetchRecent();
-        refetchTop();
-        refetchExpiring();
-      }
+    triggerIngest.mutate({ data: { source: "expired_domains" as const } }, {
+      onSuccess: (data: any) => {
+        const msg = data?.message ?? "Fetching new expired domains across .com/.io/.net/.co...";
+        toast({ title: "Sync Complete", description: msg });
+        refetchAll();
+      },
+      onError: () => {
+        toast({ title: "Sync Failed", description: "Could not connect to expireddomains.net", variant: "destructive" });
+      },
     });
+  };
+
+  const handleBrandable = async () => {
+    setBrandableLoading(true);
+    try {
+      const res = await fetch("/api/ingest", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ source: "brandable" }),
+      });
+      const data = await res.json() as { message?: string; inserted?: number; error?: string };
+      if (!res.ok) {
+        toast({ title: "Generation Failed", description: data.error ?? "Unknown error", variant: "destructive" });
+      } else {
+        toast({ title: "Brandable Domains Added", description: data.message ?? "Done" });
+        refetchAll();
+      }
+    } catch {
+      toast({ title: "Generation Failed", description: "Network error", variant: "destructive" });
+    } finally {
+      setBrandableLoading(false);
+    }
   };
 
   return (
     <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
-      <div className="flex justify-between items-center">
+      <div className="flex justify-between items-center flex-wrap gap-3">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Terminal</h1>
           <p className="text-muted-foreground mt-1">Live market overview and opportunities.</p>
         </div>
-        <Button variant="outline" size="sm" onClick={handleIngest} disabled={triggerIngest.isPending}>
-          <RefreshCw className={`w-4 h-4 mr-2 ${triggerIngest.isPending ? "animate-spin" : ""}`} />
-          Force Sync
-        </Button>
+        <div className="flex gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleBrandable}
+            disabled={brandableLoading || triggerIngest.isPending}
+            className="gap-2 border-purple-500/40 text-purple-400 hover:bg-purple-500/10 hover:text-purple-300"
+          >
+            <Sparkles className={`w-4 h-4 ${brandableLoading ? "animate-pulse" : ""}`} />
+            {brandableLoading ? "Generating..." : "Generate Brandable"}
+          </Button>
+          <Button variant="outline" size="sm" onClick={handleIngest} disabled={triggerIngest.isPending || brandableLoading}>
+            <RefreshCw className={`w-4 h-4 mr-2 ${triggerIngest.isPending ? "animate-spin" : ""}`} />
+            {triggerIngest.isPending ? "Syncing..." : "Force Sync"}
+          </Button>
+        </div>
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
