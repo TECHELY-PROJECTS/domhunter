@@ -9,7 +9,7 @@ import { Slider } from "@/components/ui/slider";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Bell } from "lucide-react";
+import { Bell, Star } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 const TIER_STYLES: Record<string, string> = {
@@ -68,6 +68,8 @@ export default function Explore() {
   const [page, setPage] = useState(1);
   const [filters, setFilters] = useState(DEFAULT_FILTERS);
   const [watchingDomain, setWatchingDomain] = useState<string | null>(null);
+  const [watchlistIds, setWatchlistIds] = useState<Set<string>>(new Set());
+  const [togglingWatchlist, setTogglingWatchlist] = useState<string | null>(null);
 
   const fetchDomains = useCallback(async () => {
     setLoading(true);
@@ -95,7 +97,45 @@ export default function Explore() {
     }
   }, [page, filters]);
 
+  useEffect(() => {
+    fetch("/api/watchlist")
+      .then(r => r.json())
+      .then((data: any[]) => {
+        setWatchlistIds(new Set(data.map((w: any) => w.domainId)));
+      })
+      .catch(() => {});
+  }, []);
+
   useEffect(() => { fetchDomains(); }, [fetchDomains]);
+
+  const handleToggleWatchlist = async (e: React.MouseEvent, domainId: string, domainName: string) => {
+    e.stopPropagation();
+    setTogglingWatchlist(domainId);
+    try {
+      const isWatched = watchlistIds.has(domainId);
+      if (isWatched) {
+        const res = await fetch(`/api/watchlist/${encodeURIComponent(domainId)}`, {
+          method: "DELETE",
+        });
+        if (res.ok) {
+          setWatchlistIds(prev => { const s = new Set(prev); s.delete(domainId); return s; });
+          toast({ title: `Removed ${domainName} from watchlist` });
+        }
+      } else {
+        const res = await fetch("/api/watchlist", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ domainId }),
+        });
+        if (res.ok) {
+          setWatchlistIds(prev => new Set([...prev, domainId]));
+          toast({ title: `⭐ Added ${domainName} to watchlist` });
+        }
+      }
+    } finally {
+      setTogglingWatchlist(null);
+    }
+  };
 
   const handleWatchDrop = async (e: React.MouseEvent, domainName: string) => {
     e.stopPropagation();
@@ -341,7 +381,7 @@ export default function Explore() {
                 <TableHead className="w-18 text-center text-xs">Signal</TableHead>
                 <TableHead className="w-22 text-center text-xs">Expires</TableHead>
                 <TableHead className="w-16 text-center text-xs">Buy</TableHead>
-                <TableHead className="w-14 text-center text-xs">Alert</TableHead>
+                <TableHead className="w-20 text-center text-xs">Watch</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -438,7 +478,7 @@ export default function Explore() {
 
                       <TableCell className="text-center py-2.5" onClick={e => e.stopPropagation()}>
                         <a
-                          href={d.auctionUrl ?? `https://www.godaddy.com/domainsearch/find?checkAvail=1&domainToCheck=${d.name}`}
+                          href={d.auctionUrl ?? `https://www.hostinger.com/domain-name-search?domain=${d.name}`}
                           target="_blank"
                           rel="noopener noreferrer"
                           className="text-xs bg-primary text-primary-foreground px-2 py-1 rounded hover:opacity-90 transition-opacity whitespace-nowrap"
@@ -447,18 +487,30 @@ export default function Explore() {
                         </a>
                       </TableCell>
                       <TableCell className="text-center py-2.5" onClick={e => e.stopPropagation()}>
-                        {d.status === "EXPIRING" ? (
+                        <div className="flex items-center justify-center gap-1">
                           <button
-                            onClick={(e) => handleWatchDrop(e, d.name)}
-                            disabled={watchingDomain === d.name}
-                            title="Get alerted when this domain drops"
-                            className="inline-flex items-center justify-center w-7 h-7 rounded text-amber-400 hover:bg-amber-400/10 transition-colors disabled:opacity-50"
+                            onClick={(e) => handleToggleWatchlist(e, d.id, d.name)}
+                            disabled={togglingWatchlist === d.id}
+                            title={watchlistIds.has(d.id) ? "Remove from watchlist" : "Add to watchlist"}
+                            className={`inline-flex items-center justify-center w-7 h-7 rounded transition-colors disabled:opacity-50 ${
+                              watchlistIds.has(d.id)
+                                ? "text-yellow-400 hover:bg-yellow-400/10"
+                                : "text-muted-foreground hover:text-yellow-400 hover:bg-yellow-400/10"
+                            }`}
                           >
-                            <Bell className="w-3.5 h-3.5" />
+                            <Star className={`w-3.5 h-3.5 ${watchlistIds.has(d.id) ? "fill-current" : ""}`} />
                           </button>
-                        ) : (
-                          <span className="text-muted-foreground/30">—</span>
-                        )}
+                          {d.status === "EXPIRING" && (
+                            <button
+                              onClick={(e) => handleWatchDrop(e, d.name)}
+                              disabled={watchingDomain === d.name}
+                              title="Get alerted when this domain drops"
+                              className="inline-flex items-center justify-center w-7 h-7 rounded text-amber-400 hover:bg-amber-400/10 transition-colors disabled:opacity-50"
+                            >
+                              <Bell className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))

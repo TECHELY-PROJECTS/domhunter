@@ -82,8 +82,9 @@ const REC_EMOJI: Record<string, string> = {
 };
 
 const REGISTRAR_LINKS = (name: string) => [
-  { label: "GoDaddy",   url: `https://www.godaddy.com/domainsearch/find?checkAvail=1&domainToCheck=${name}`, cls: "bg-green-700 hover:bg-green-600" },
+  { label: "Hostinger", url: `https://www.hostinger.com/domain-name-search?domain=${name}`,                 cls: "bg-violet-700 hover:bg-violet-600" },
   { label: "Namecheap", url: `https://www.namecheap.com/domains/registration/results/?domain=${name}`,      cls: "bg-orange-600 hover:bg-orange-500" },
+  { label: "GoDaddy",   url: `https://www.godaddy.com/domainsearch/find?checkAvail=1&domainToCheck=${name}`, cls: "bg-green-700 hover:bg-green-600" },
   { label: "Afternic",  url: `https://www.afternic.com/domain/${name}`,                                     cls: "bg-blue-700 hover:bg-blue-600" },
   { label: "Dan.com",   url: `https://dan.com/search?name=${name}`,                                         cls: "bg-purple-700 hover:bg-purple-600" },
   { label: "Sedo",      url: `https://sedo.com/search/?keyword=${name}`,                                    cls: "bg-zinc-700 hover:bg-zinc-600" },
