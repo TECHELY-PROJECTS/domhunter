@@ -3,7 +3,7 @@ import { db } from "@workspace/db";
 import { alertsTable, usersTable } from "@workspace/db";
 import { eq, and } from "drizzle-orm";
 import { randomUUID } from "crypto";
-import { z } from "zod";
+import { z, ZodError } from "zod";
 import { testTelegramConnection } from "../lib/telegram";
 
 const router: IRouter = Router();
@@ -68,6 +68,9 @@ router.post("/alerts", async (req, res) => {
       .returning();
     res.status(201).json(alert);
   } catch (err) {
+    if (err instanceof ZodError) {
+      return res.status(400).json({ error: "Validation failed", issues: err.issues });
+    }
     req.log.error({ err }, "Failed to create alert");
     res.status(500).json({ error: "Internal server error" });
   }
