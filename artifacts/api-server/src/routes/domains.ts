@@ -2,6 +2,8 @@ import { Router, type IRouter } from "express";
 import { db } from "@workspace/db";
 import { domainsTable, metricsTable, watchlistTable } from "@workspace/db";
 import { eq, sql, desc, asc, and, gte, lte, ilike, inArray } from "drizzle-orm";
+import { rdapLookup } from "../lib/enrichment/rdap";
+import { rdapToStatus } from "../lib/jobs/enrich-worker";
 import {
   ListDomainsQueryParams,
   GetDomainParams,
@@ -283,6 +285,74 @@ router.get("/domains", async (req, res) => {
     });
   } catch (err) {
     req.log.error({ err }, "Failed to list domains");
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+/**
+ * POST /api/domains/verify-status
+ * Runs RDAP on every domain and corrects status + stores real expiry dates.
+ * Runs in background — responds immediately with job count.
+ */
+router.post("/domains/verify-status", async (req, res) => {
+  try {
+    const domains = await db.query.domainsTable.findMany({
+      with: { metrics: true },
+    });
+
+    res.json({ ok: true, queued: domains.length, message: "RDAP verification running in background" });
+
+    // Run async — don't await
+    (async () => {
+      let corrected = 0;
+      let expiryStored = 0;
+
+      for (const d of domains) {
+        try {
+          const rdap = await rdapLookup(d.name);
+
+          // Update domain status
+          const newStatus = rdapToStatus(rdap, d.status);
+          if (newStatus && newStatus !== d.status) {
+            await db
+              .update(domainsTable)
+              .set({ status: newStatus, updatedAt: new Date() })
+              .where(eq(domainsTable.id, d.id));
+            corrected++;
+          }
+
+          // Store real expiry + creation dates into metrics
+          if (rdap.expiresDate || rdap.createdDate) {
+            const ageYears = rdap.createdDate
+              ? Math.round((Date.now() - rdap.createdDate.getTime()) / (365.25 * 24 * 3600 * 1000))
+              : undefined;
+
+            if (d.metrics) {
+              await db
+                .update(metricsTable)
+                .set({
+                  expiresDate: rdap.expiresDate ?? d.metrics.expiresDate,
+                  createdDate: rdap.createdDate ?? d.metrics.createdDate,
+                  domainAge:   ageYears ?? d.metrics.domainAge,
+                  registrar:   rdap.registrar ?? d.metrics.registrar,
+                  updatedAt:   new Date(),
+                })
+                .where(eq(metricsTable.domainId, d.id));
+            }
+            expiryStored++;
+          }
+
+          // Rate-limit: 3 RDAP lookups per second
+          await new Promise((r) => setTimeout(r, 350));
+        } catch {
+          // continue on per-domain errors
+        }
+      }
+
+      logger.info({ total: domains.length, corrected, expiryStored }, "RDAP bulk verification complete");
+    })().catch((err) => logger.error({ err }, "RDAP bulk verification failed"));
+  } catch (err) {
+    req.log.error({ err }, "Failed to start RDAP verification");
     res.status(500).json({ error: "Internal server error" });
   }
 });

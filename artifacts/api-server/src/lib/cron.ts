@@ -1,15 +1,15 @@
 import { logger } from "./logger";
 import { db } from "@workspace/db";
-import { alertsTable, domainsTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { alertsTable, domainsTable, metricsTable } from "@workspace/db";
+import { eq, and } from "drizzle-orm";
 import { sendTelegramAlert } from "./telegram";
 import type { DomainAlert } from "./telegram";
 
 const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
 const ONE_MIN_MS = 60 * 1000;
 
-// Statuses that mean a domain is hand-registerable at normal cost
-const CHEAP_STATUSES = ["EXPIRED", "AVAILABLE", "EXPIRING", "PENDING_DELETE", "REDEMPTION"];
+// Statuses that mean a domain can be hand-registered at normal cost
+const CHEAP_STATUSES = new Set(["EXPIRED", "AVAILABLE", "EXPIRING", "PENDING_DELETE", "REDEMPTION"]);
 
 let lastIngestAt: Date | null = null;
 let alertsSentToday: string | null = null;
@@ -43,37 +43,56 @@ export interface AlertFilter {
   minBrandScore?: number;
   minDA?: number;
   maxBid?: number;
+  maxDaysToExpiry?: number;   // for "dropping soon" alerts — e.g. 15
+  minDaysToExpiry?: number;   // lower bound on expiry window
   recommendation?: string;
   niche?: string;
   tier?: string;
   tlds?: string[];
-  // "cheap" = EXPIRED/AVAILABLE/EXPIRING only (default true)
-  // "any"   = include AUCTION too
+  // "cheap"   = EXPIRED/AVAILABLE/EXPIRING only (default)
+  // "any"     = include AUCTION too
   // "auction" = auction only
-  statusMode?: "cheap" | "any" | "auction";
+  // "dropping"= EXPIRING with expires_date within maxDaysToExpiry days
+  statusMode?: "cheap" | "any" | "auction" | "dropping";
 }
 
-function matchesFilter(d: { tld: string; status: string; currentBid?: number | null }, m: {
-  rarityScore?: number | null;
-  brandScore?: number | null;
-  domainAuthority?: number | null;
-  recommendation?: string | null;
-  niche?: string | null;
-  rarityTier?: string | null;
-} | null, filter: AlertFilter): boolean {
+export function matchesFilter(
+  d: { tld: string; status: string; currentBid?: number | null },
+  m: {
+    rarityScore?: number | null;
+    brandScore?: number | null;
+    domainAuthority?: number | null;
+    recommendation?: string | null;
+    niche?: string | null;
+    rarityTier?: string | null;
+    expiresDate?: Date | string | null;
+  } | null,
+  filter: AlertFilter,
+): boolean {
   if (!m) return false;
 
-  // Status filter — default is cheap (no auctions)
   const mode = filter.statusMode ?? "cheap";
+  const statusUpper = (d.status ?? "").toUpperCase();
+
   if (mode === "cheap") {
-    if (!CHEAP_STATUSES.includes(d.status?.toUpperCase() ?? "")) return false;
+    if (!CHEAP_STATUSES.has(statusUpper)) return false;
   } else if (mode === "auction") {
-    if ((d.status?.toUpperCase() ?? "") !== "AUCTION") return false;
+    if (statusUpper !== "AUCTION") return false;
+  } else if (mode === "dropping") {
+    // Must be EXPIRING AND have a known expiry date within window
+    if (statusUpper !== "EXPIRING") return false;
+    const expiresDate = m.expiresDate ? new Date(m.expiresDate) : null;
+    if (!expiresDate) return false;
+    const daysLeft = (expiresDate.getTime() - Date.now()) / 86_400_000;
+    if (daysLeft < 0) return false; // already past — should be EXPIRED by now
+    const maxDays = filter.maxDaysToExpiry ?? 15;
+    const minDays = filter.minDaysToExpiry ?? 0;
+    if (daysLeft > maxDays || daysLeft < minDays) return false;
   }
   // mode === "any" → no status restriction
 
-  // Budget guard: skip if bid exceeds maxBid (defaults to 20 if not set and mode is cheap)
-  const maxBid = filter.maxBid ?? (mode === "cheap" ? 20 : undefined);
+  // Budget guard — default $20 for cheap/dropping modes
+  const maxBid = filter.maxBid ?? (mode === "cheap" || mode === "dropping" ? 20 : undefined);
   if (maxBid != null && d.currentBid != null && d.currentBid > maxBid) return false;
 
   if (filter.minScore      != null && (m.rarityScore     ?? 0) < filter.minScore)      return false;
@@ -99,7 +118,7 @@ async function runAlerts(): Promise<void> {
 
     if (alerts.length === 0) return;
 
-    // Pull last 24h of domains with full metrics
+    // Pull last 24h of domains with full metrics (including expiry dates)
     const since = new Date(Date.now() - SIX_HOURS_MS * 4);
 
     let totalSent = 0;
@@ -108,9 +127,7 @@ async function runAlerts(): Promise<void> {
       let filter: AlertFilter = {};
       try {
         filter = JSON.parse(alert.filterJson) as AlertFilter;
-      } catch {
-        // ignore malformed
-      }
+      } catch { /* ignore */ }
 
       const domainRows = await db.query.domainsTable.findMany({
         where: (t, { gte }) => gte(t.createdAt, since),
@@ -120,15 +137,22 @@ async function runAlerts(): Promise<void> {
       const matched = domainRows.filter((d) =>
         matchesFilter(
           { tld: d.tld, status: d.status ?? "", currentBid: d.currentBid },
-          d.metrics,
+          d.metrics
+            ? { ...d.metrics, expiresDate: d.metrics.expiresDate }
+            : null,
           filter,
         )
       );
 
       if (matched.length === 0) continue;
 
-      // Sort: BUY-only alerts → brand score desc; otherwise rarity desc
       const sorted = [...matched].sort((a, b) => {
+        // "dropping" alerts → sort by soonest expiry first
+        if (filter.statusMode === "dropping") {
+          const aExp = a.metrics?.expiresDate ? new Date(a.metrics.expiresDate).getTime() : Infinity;
+          const bExp = b.metrics?.expiresDate ? new Date(b.metrics.expiresDate).getTime() : Infinity;
+          return aExp - bExp;
+        }
         if (filter.recommendation === "BUY") {
           return (b.metrics?.brandScore ?? 0) - (a.metrics?.brandScore ?? 0);
         }
@@ -152,6 +176,7 @@ async function runAlerts(): Promise<void> {
               domainAuthority: d.metrics.domainAuthority,
               backlinks:       d.metrics.backlinks,
               domainAge:       d.metrics.domainAge,
+              expiresDate:     d.metrics.expiresDate,
               aiReason:        d.metrics.aiReason,
             }
           : null,
@@ -199,4 +224,4 @@ export function startCron(): void {
   );
 }
 
-export { runAlerts, matchesFilter };
+export { runAlerts };
