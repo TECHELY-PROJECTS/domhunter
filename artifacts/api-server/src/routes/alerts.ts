@@ -1,11 +1,12 @@
 import { Router, type IRouter } from "express";
 import { db } from "@workspace/db";
-import { alertsTable, usersTable } from "@workspace/db";
+import { alertsTable, usersTable, domainsTable } from "@workspace/db";
 import { eq, and } from "drizzle-orm";
 import { randomUUID } from "crypto";
 import { z, ZodError } from "zod";
 import { testTelegramConnection, sendTelegramAlert } from "../lib/telegram";
-import { runAlerts } from "../lib/cron";
+import { runAlerts, matchesFilter } from "../lib/cron";
+import type { AlertFilter } from "../lib/cron";
 
 const router: IRouter = Router();
 
@@ -16,13 +17,15 @@ const AlertBody = z.object({
   telegramChatId: z.string().min(1),
   telegramBotToken: z.string().min(1),
   filter: z.object({
-    minScore:      z.number().min(0).max(100).optional(),
-    minBrandScore: z.number().min(0).max(100).optional(),
-    minDA:         z.number().min(0).max(100).optional(),
+    minScore:       z.number().min(0).max(100).optional(),
+    minBrandScore:  z.number().min(0).max(100).optional(),
+    minDA:          z.number().min(0).max(100).optional(),
+    maxBid:         z.number().min(0).optional(),
     recommendation: z.enum(["BUY", "WATCH", "SKIP", "any"]).optional(),
-    niche:  z.string().optional(),
-    tier:   z.string().optional(),
-    tlds:   z.array(z.string()).optional(),
+    niche:          z.string().optional(),
+    tier:           z.string().optional(),
+    tlds:           z.array(z.string()).optional(),
+    statusMode:     z.enum(["cheap", "any", "auction"]).optional(),
   }).optional().default({}),
 });
 
@@ -94,53 +97,69 @@ router.post("/alerts/test-telegram", async (req, res) => {
   }
 });
 
-// Send digest now (for the given alert or all active alerts)
+// Send digest now for a specific alert using its saved filter
 router.post("/alerts/send-now", async (req, res) => {
   try {
     const { alertId } = req.body as { alertId?: string };
 
     if (alertId) {
-      // Send for one specific alert
       const alert = await db.query.alertsTable.findFirst({
         where: and(eq(alertsTable.id, alertId), eq(alertsTable.userId, DEMO_USER_ID)),
       });
       if (!alert) return res.status(404).json({ error: "Alert not found" });
 
-      // Fetch all BUY domains with scores for manual send
-      const domains = await db.query.domainsTable.findMany({
+      let filter: AlertFilter = {};
+      try { filter = JSON.parse(alert.filterJson) as AlertFilter; } catch { /* ignore */ }
+
+      // Fetch all domains with metrics, apply the alert's own filter
+      const allDomains = await db.query.domainsTable.findMany({
         with: { metrics: true },
-        limit: 100,
       });
 
-      const topDomains = domains
-        .filter(d => d.metrics?.brandScore != null)
-        .sort((a, b) => (b.metrics?.brandScore ?? 0) - (a.metrics?.brandScore ?? 0))
-        .slice(0, 12)
-        .map(d => ({
-          name: d.name,
-          tld: d.tld,
-          status: d.status,
-          auctionEndAt: d.auctionEndAt,
-          currentBid: d.currentBid,
-          metrics: d.metrics ? {
-            rarityScore:     d.metrics.rarityScore,
-            brandScore:      d.metrics.brandScore,
-            estimatedValue:  d.metrics.estimatedValue,
-            recommendation:  d.metrics.recommendation,
-            niche:           d.metrics.niche,
-            rarityTier:      d.metrics.rarityTier,
-            domainAuthority: d.metrics.domainAuthority,
-            backlinks:       d.metrics.backlinks,
-            domainAge:       d.metrics.domainAge,
-            aiReason:        d.metrics.aiReason,
-          } : null,
-        }));
+      const matched = allDomains.filter((d) =>
+        matchesFilter(
+          { tld: d.tld, status: d.status ?? "", currentBid: d.currentBid },
+          d.metrics,
+          filter,
+        )
+      );
+
+      if (matched.length === 0) {
+        return res.json({ ok: true, sent: 0, message: "No domains matched this alert's filters" });
+      }
+
+      const sorted = [...matched].sort((a, b) => {
+        if (filter.recommendation === "BUY") {
+          return (b.metrics?.brandScore ?? 0) - (a.metrics?.brandScore ?? 0);
+        }
+        return (b.metrics?.rarityScore ?? 0) - (a.metrics?.rarityScore ?? 0);
+      });
+
+      const top12 = sorted.slice(0, 12).map((d) => ({
+        name: d.name,
+        tld: d.tld,
+        status: d.status,
+        auctionEndAt: d.auctionEndAt,
+        currentBid: d.currentBid,
+        metrics: d.metrics ? {
+          rarityScore:     d.metrics.rarityScore,
+          brandScore:      d.metrics.brandScore,
+          estimatedValue:  d.metrics.estimatedValue,
+          recommendation:  d.metrics.recommendation,
+          niche:           d.metrics.niche,
+          rarityTier:      d.metrics.rarityTier,
+          domainAuthority: d.metrics.domainAuthority,
+          backlinks:       d.metrics.backlinks,
+          domainAge:       d.metrics.domainAge,
+          aiReason:        d.metrics.aiReason,
+        } : null,
+      }));
 
       const sent = await sendTelegramAlert({
         botToken: alert.telegramBotToken,
         chatId: alert.telegramChatId,
         alertName: alert.name,
-        domains: topDomains,
+        domains: top12,
       });
 
       if (sent) {
@@ -149,10 +168,10 @@ router.post("/alerts/send-now", async (req, res) => {
           .where(eq(alertsTable.id, alert.id));
       }
 
-      return res.json({ ok: sent, sent: topDomains.length });
+      return res.json({ ok: sent, sent: top12.length });
     }
 
-    // Run full digest
+    // No alertId → run full scheduled digest
     await runAlerts();
     res.json({ ok: true, message: "Digest triggered for all active alerts" });
   } catch (err) {

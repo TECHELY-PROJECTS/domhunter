@@ -9,8 +9,8 @@ function fmt(v?: number | null, prefix = "$"): string {
 }
 
 function signal(rec?: string | null): string {
-  if (rec === "BUY")   return "🟢 BUY";
-  if (rec === "WATCH") return "🟡 WATCH";
+  if (rec === "BUY")   return "🟢";
+  if (rec === "WATCH") return "🟡";
   return "⚪";
 }
 
@@ -19,6 +19,33 @@ function tierBadge(tier?: string | null): string {
   if (tier === "epic")      return "💎 Epic";
   if (tier === "rare")      return "⭐ Rare";
   if (tier === "uncommon")  return "✓ Uncommon";
+  return "";
+}
+
+function acquisitionLine(status?: string | null, bid?: number | null, endAt?: Date | string | null): string {
+  const s = (status ?? "").toUpperCase();
+
+  if (s === "EXPIRED" || s === "AVAILABLE") {
+    return "✅ Register ~$12/yr";
+  }
+  if (s === "EXPIRING" || s === "PENDING_DELETE" || s === "REDEMPTION") {
+    const days = endAt
+      ? Math.round((new Date(endAt).getTime() - Date.now()) / 86400000)
+      : null;
+    const when = days != null
+      ? (days <= 0 ? "expired today" : days === 1 ? "expires tomorrow" : `expires in ${days}d`)
+      : "expiring soon";
+    return `⏳ ${when} — Register ~$12/yr`;
+  }
+  if (s === "AUCTION") {
+    const bidStr = bid != null ? ` · Current bid: ${fmt(bid)}` : "";
+    if (endAt) {
+      const days = Math.round((new Date(endAt).getTime() - Date.now()) / 86400000);
+      const label = days <= 0 ? "ended" : days === 1 ? "1d left" : `${days}d left`;
+      return `🔨 Auction ${label}${bidStr}`;
+    }
+    return `🔨 Auction${bidStr}`;
+  }
   return "";
 }
 
@@ -42,15 +69,6 @@ export interface DomainAlert {
   } | null;
 }
 
-function daysLeft(endAt?: Date | string | null): string | null {
-  if (!endAt) return null;
-  const diff = Math.round((new Date(endAt).getTime() - Date.now()) / 86400000);
-  if (diff < 0) return "expired";
-  if (diff === 0) return "⚠️ TODAY";
-  if (diff === 1) return "⚠️ 1d left";
-  return `${diff}d left`;
-}
-
 export async function sendTelegramAlert(opts: {
   botToken: string;
   chatId: string;
@@ -64,33 +82,37 @@ export async function sendTelegramAlert(opts: {
   for (const d of domains.slice(0, 12)) {
     const m = d.metrics;
     const url = `${APP_URL}/domain/${d.name}`;
-    const brand    = m?.brandScore  != null ? `Brand <b>${m.brandScore}</b>` : null;
-    const rarity   = m?.rarityScore != null ? `Rarity ${Math.round(m.rarityScore)}` : null;
-    const value    = m?.estimatedValue ? `💰 <b>${fmt(m.estimatedValue)}</b>` : null;
-    const niche    = m?.niche ? m.niche.charAt(0).toUpperCase() + m.niche.slice(1) : null;
-    const tier     = tierBadge(m?.rarityTier);
-    const da       = m?.domainAuthority ? `DA ${m.domainAuthority}` : null;
-    const age      = m?.domainAge ? `${m.domainAge}yr` : null;
-    const bl       = m?.backlinks ? `${m.backlinks >= 1000 ? (m.backlinks/1000).toFixed(1)+"K" : m.backlinks} links` : null;
-    const sig      = signal(m?.recommendation);
-    const deadline = daysLeft(d.auctionEndAt);
-    const bid      = d.currentBid ? `Current bid: ${fmt(d.currentBid)}` : null;
-    const reason   = m?.aiReason ? `<i>${m.aiReason}</i>` : null;
 
-    const line1 = `${sig}  <a href="${url}"><b>${d.name}</b></a>  ${tier}`;
-    const line2parts = [brand, rarity, value, niche].filter(Boolean);
-    const line3parts = [da, age, bl, deadline ? `⏳ ${deadline}` : null, bid].filter(Boolean);
+    const sig    = signal(m?.recommendation);
+    const tier   = tierBadge(m?.rarityTier);
+    const brand  = m?.brandScore  != null ? `Brand <b>${m.brandScore}</b>` : null;
+    const rarity = m?.rarityScore != null ? `Rarity ${Math.round(m.rarityScore)}` : null;
+    const value  = m?.estimatedValue ? `💰 ${fmt(m.estimatedValue)}` : null;
+    const niche  = m?.niche ? m.niche.charAt(0).toUpperCase() + m.niche.slice(1) : null;
+    const da     = m?.domainAuthority ? `DA ${m.domainAuthority}` : null;
+    const age    = m?.domainAge ? `${m.domainAge}yr old` : null;
+    const bl     = m?.backlinks
+      ? `${m.backlinks >= 1000 ? (m.backlinks / 1000).toFixed(1) + "K" : m.backlinks} links`
+      : null;
+    const acq    = acquisitionLine(d.status, d.currentBid, d.auctionEndAt);
+    const reason = m?.aiReason ? `<i>${m.aiReason}</i>` : null;
+
+    const line1     = `${sig} <a href="${url}"><b>${d.name}</b></a>  ${tier}`;
+    const scoreLine = [brand, rarity, value, niche].filter(Boolean).join(" · ");
+    const metaLine  = [da, age, bl].filter(Boolean).join(" · ");
 
     lines.push(line1);
-    if (line2parts.length) lines.push(`   ${line2parts.join(" · ")}`);
-    if (line3parts.length) lines.push(`   ${line3parts.join(" · ")}`);
-    if (reason) lines.push(`   ${reason}`);
+    if (scoreLine)  lines.push(`   ${scoreLine}`);
+    if (acq)        lines.push(`   ${acq}`);
+    if (metaLine)   lines.push(`   ${metaLine}`);
+    if (reason)     lines.push(`   ${reason}`);
     lines.push("");
   }
 
+  const count = domains.length;
   const header = [
     `🎯 <b>DomHunter</b> — ${alertName}`,
-    `<b>${domains.length}</b> domain${domains.length !== 1 ? "s" : ""} matched your filter\n`,
+    `<b>${count}</b> hand-registerable domain${count !== 1 ? "s" : ""} matched your filter\n`,
   ].join("\n");
 
   const footer = `<a href="${APP_URL}/explore">Browse all →</a>  ·  <a href="${APP_URL}/alerts">Manage alerts</a>`;
@@ -117,7 +139,7 @@ export async function sendTelegramAlert(opts: {
       return false;
     }
 
-    logger.info({ chatId, alertName, count: domains.length }, "Telegram alert sent");
+    logger.info({ chatId, alertName, count }, "Telegram alert sent");
     return true;
   } catch (err) {
     logger.error({ err }, "Failed to send Telegram alert");
@@ -140,7 +162,7 @@ export async function testTelegramConnection(
           text: [
             "✅ <b>DomHunter</b> — Connection confirmed!",
             "",
-            "You'll receive daily domain investment alerts here.",
+            "You'll receive daily digests of <b>expired &amp; hand-registerable</b> domains here.",
             `📊 Dashboard: <a href="${APP_URL}/explore">${APP_URL}/explore</a>`,
           ].join("\n"),
           parse_mode: "HTML",

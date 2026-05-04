@@ -8,6 +8,9 @@ import type { DomainAlert } from "./telegram";
 const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
 const ONE_MIN_MS = 60 * 1000;
 
+// Statuses that mean a domain is hand-registerable at normal cost
+const CHEAP_STATUSES = ["EXPIRED", "AVAILABLE", "EXPIRING", "PENDING_DELETE", "REDEMPTION"];
+
 let lastIngestAt: Date | null = null;
 let alertsSentToday: string | null = null;
 
@@ -35,14 +38,53 @@ async function runIngest(): Promise<void> {
   }
 }
 
-interface AlertFilter {
+export interface AlertFilter {
   minScore?: number;
   minBrandScore?: number;
   minDA?: number;
+  maxBid?: number;
   recommendation?: string;
   niche?: string;
   tier?: string;
   tlds?: string[];
+  // "cheap" = EXPIRED/AVAILABLE/EXPIRING only (default true)
+  // "any"   = include AUCTION too
+  // "auction" = auction only
+  statusMode?: "cheap" | "any" | "auction";
+}
+
+function matchesFilter(d: { tld: string; status: string; currentBid?: number | null }, m: {
+  rarityScore?: number | null;
+  brandScore?: number | null;
+  domainAuthority?: number | null;
+  recommendation?: string | null;
+  niche?: string | null;
+  rarityTier?: string | null;
+} | null, filter: AlertFilter): boolean {
+  if (!m) return false;
+
+  // Status filter — default is cheap (no auctions)
+  const mode = filter.statusMode ?? "cheap";
+  if (mode === "cheap") {
+    if (!CHEAP_STATUSES.includes(d.status?.toUpperCase() ?? "")) return false;
+  } else if (mode === "auction") {
+    if ((d.status?.toUpperCase() ?? "") !== "AUCTION") return false;
+  }
+  // mode === "any" → no status restriction
+
+  // Budget guard: skip if bid exceeds maxBid (defaults to 20 if not set and mode is cheap)
+  const maxBid = filter.maxBid ?? (mode === "cheap" ? 20 : undefined);
+  if (maxBid != null && d.currentBid != null && d.currentBid > maxBid) return false;
+
+  if (filter.minScore      != null && (m.rarityScore     ?? 0) < filter.minScore)      return false;
+  if (filter.minBrandScore != null && (m.brandScore      ?? 0) < filter.minBrandScore) return false;
+  if (filter.minDA         != null && (m.domainAuthority ?? 0) < filter.minDA)         return false;
+  if (filter.recommendation && filter.recommendation !== "any" && m.recommendation !== filter.recommendation) return false;
+  if (filter.niche          && filter.niche !== "any"          && m.niche          !== filter.niche)          return false;
+  if (filter.tier           && filter.tier  !== "any"          && m.rarityTier     !== filter.tier)           return false;
+  if (filter.tlds && filter.tlds.length > 0 && !filter.tlds.includes(d.tld)) return false;
+
+  return true;
 }
 
 async function runAlerts(): Promise<void> {
@@ -75,23 +117,18 @@ async function runAlerts(): Promise<void> {
         with: { metrics: true },
       });
 
-      const matched = domainRows.filter((d) => {
-        const m = d.metrics;
-        if (!m) return false;
-        if (filter.minScore      != null && (m.rarityScore      ?? 0) < filter.minScore)      return false;
-        if (filter.minBrandScore != null && (m.brandScore       ?? 0) < filter.minBrandScore) return false;
-        if (filter.minDA         != null && (m.domainAuthority  ?? 0) < filter.minDA)         return false;
-        if (filter.recommendation && filter.recommendation !== "any" && m.recommendation !== filter.recommendation) return false;
-        if (filter.niche         && filter.niche !== "any"  && m.niche      !== filter.niche)        return false;
-        if (filter.tier          && filter.tier  !== "any"  && m.rarityTier !== filter.tier)         return false;
-        if (filter.tlds && filter.tlds.length > 0 && !filter.tlds.includes(d.tld)) return false;
-        return true;
-      });
+      const matched = domainRows.filter((d) =>
+        matchesFilter(
+          { tld: d.tld, status: d.status ?? "", currentBid: d.currentBid },
+          d.metrics,
+          filter,
+        )
+      );
 
       if (matched.length === 0) continue;
 
       // Sort: BUY-only alerts → brand score desc; otherwise rarity desc
-      const sorted = matched.sort((a, b) => {
+      const sorted = [...matched].sort((a, b) => {
         if (filter.recommendation === "BUY") {
           return (b.metrics?.brandScore ?? 0) - (a.metrics?.brandScore ?? 0);
         }
@@ -162,5 +199,4 @@ export function startCron(): void {
   );
 }
 
-// Exported for on-demand use (e.g. POST /api/alerts/send-now)
-export { runAlerts };
+export { runAlerts, matchesFilter };
