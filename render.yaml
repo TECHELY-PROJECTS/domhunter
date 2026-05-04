@@ -63,3 +63,11 @@ services:
         sync: false
       - key: ICANN_PASSWORD
         sync: false
+
+      # --- Telegram alerts — set these to auto-create your bot alert on every deploy ---
+      # Bot token from @BotFather
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      # Your Telegram chat ID (e.g. 751790753)
+      - key: TELEGRAM_CHAT_ID
+        sync: false

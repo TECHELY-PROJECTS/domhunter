@@ -1,7 +1,8 @@
 import { logger } from "./logger";
 import { db } from "@workspace/db";
-import { alertsTable, domainsTable, metricsTable } from "@workspace/db";
+import { alertsTable, domainsTable, metricsTable, usersTable } from "@workspace/db";
 import { eq, and } from "drizzle-orm";
+import { randomUUID } from "crypto";
 import { sendTelegramAlert } from "./telegram";
 import type { DomainAlert } from "./telegram";
 
@@ -210,7 +211,74 @@ async function runAlerts(): Promise<void> {
   }
 }
 
+/**
+ * If TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID env vars are set, ensure a default
+ * alert row exists in the DB. This survives redeploys — on every start we upsert
+ * the alert so it's always present even if the DB was wiped or freshly migrated.
+ */
+async function seedDefaultAlert(): Promise<void> {
+  const botToken = process.env.TELEGRAM_BOT_TOKEN;
+  const chatId   = process.env.TELEGRAM_CHAT_ID;
+  if (!botToken || !chatId) return;
+
+  try {
+    // Ensure demo user exists
+    const existingUser = await db.query.usersTable.findFirst({
+      where: eq(usersTable.id, "demo-user-1"),
+    });
+    if (!existingUser) {
+      await db.insert(usersTable).values({
+        id: "demo-user-1",
+        email: "demo@domhunter.io",
+        name: "Demo User",
+      });
+    }
+
+    // Check if a default alert already exists with this bot token
+    const existing = await db.query.alertsTable.findFirst({
+      where: and(
+        eq(alertsTable.userId, "demo-user-1"),
+        eq(alertsTable.name, "Daily Digest"),
+      ),
+    });
+
+    if (existing) {
+      // Update token/chatId in case they changed in env vars
+      await db.update(alertsTable)
+        .set({
+          telegramBotToken: botToken,
+          telegramChatId: chatId,
+          active: true,
+          updatedAt: new Date(),
+        })
+        .where(eq(alertsTable.id, existing.id));
+      logger.info("Default Telegram alert refreshed from env vars");
+    } else {
+      await db.insert(alertsTable).values({
+        id: randomUUID(),
+        userId: "demo-user-1",
+        name: "Daily Digest",
+        telegramBotToken: botToken,
+        telegramChatId: chatId,
+        filterJson: JSON.stringify({
+          statusMode: "cheap",
+          maxBid: 20,
+          maxSldLength: 12,
+          recommendation: "BUY",
+        }),
+        active: true,
+      });
+      logger.info("Default Telegram alert created from env vars");
+    }
+  } catch (err) {
+    logger.error({ err }, "Failed to seed default Telegram alert");
+  }
+}
+
 export function startCron(): void {
+  // Seed the default alert from env vars on every startup
+  seedDefaultAlert().catch(() => {});
+
   runIngest().catch(() => {});
 
   setInterval(() => {

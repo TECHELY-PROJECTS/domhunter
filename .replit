@@ -56,3 +56,4 @@ externalPort = 3000
 [userenv.shared]
 APP_URL = "https://domhunter.techely.com"
 ALERT_HOUR_UTC = "8"
+TELEGRAM_CHAT_ID = "751790753"
