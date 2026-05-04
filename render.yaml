@@ -1,0 +1,65 @@
+# render.yaml — DomHunter deployment blueprint
+# Docs: https://render.com/docs/blueprint-spec
+#
+# Architecture: single Render Web Service.
+# Express serves both /api/* (backend) and /* (Vite static frontend).
+# This avoids CORS issues and works entirely on the free tier.
+#
+# Database: NOT included here — use Neon.tech free tier (no 90-day expiry).
+# Set DATABASE_URL manually in the Render dashboard after creating your DB.
+
+services:
+  - type: web
+    name: domhunter
+    env: node
+    plan: free
+    region: oregon
+    buildCommand: pnpm install --frozen-lockfile && pnpm run build:render
+    startCommand: node --enable-source-maps artifacts/api-server/dist/index.mjs
+    healthCheckPath: /api/healthz
+
+    envVars:
+      - key: NODE_ENV
+        value: production
+
+      # Render assigns PORT automatically on free tier (usually 10000)
+      - key: PORT
+        value: 10000
+
+      # --- REQUIRED — set these in the Render dashboard ---
+
+      # PostgreSQL connection string (get from Neon.tech free tier)
+      - key: DATABASE_URL
+        sync: false
+
+      # Random secret for Express sessions (click "Generate" in Render dashboard)
+      - key: SESSION_SECRET
+        generateValue: true
+
+      # --- OPTIONAL — AI scoring, enrichment, alerts ---
+
+      # AI valuation (CometAPI — primary, cheaper)
+      - key: COMETAPI_API_KEY
+        sync: false
+
+      # AI valuation (OpenRouter — fallback)
+      - key: OPENROUTER_API_KEY
+        sync: false
+
+      # Background job queue (Upstash Redis free tier — https://upstash.com)
+      - key: UPSTASH_REDIS_URL
+        sync: false
+
+      # Domain authority enrichment (https://www.domcop.com/openpagerank)
+      - key: OPENPAGERANK_API_KEY
+        sync: false
+
+      # ExpiredDomains.net session cookie for scraping
+      - key: EXPIREDDOMAINS_SESSION
+        sync: false
+
+      # ICANN CZDS zone file access
+      - key: ICANN_USERNAME
+        sync: false
+      - key: ICANN_PASSWORD
+        sync: false
