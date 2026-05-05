@@ -10,6 +10,7 @@ import {
   getRarityTier,
   tldScore,
 } from "../lib/scoring/index";
+import { detectNiche, computeBrandScore } from "../lib/scoring/niche";
 import type { DomainFeedItem } from "../lib/sources/types";
 import { fetchGoDaddyRSS } from "../lib/sources/godaddy-rss";
 import { fetchNameJetRSS } from "../lib/sources/namejet-rss";
@@ -121,6 +122,8 @@ async function persistFeedItems(
       trendScore,
     });
     const tier = getRarityTier(breakdown.total);
+    const niche = detectNiche(parts.sld);
+    const brandScore = computeBrandScore(breakdown.pronounceability, breakdown.length, breakdown.keywordValue);
 
     await db.insert(metricsTable).values({
       id: randomUUID(),
@@ -135,9 +138,9 @@ async function persistFeedItems(
       keywordScore: breakdown.keywordValue,
       rarityScore: breakdown.total,
       rarityTier: tier,
-      brandScore: null,
+      brandScore,
       estimatedValue: Math.round(breakdown.total * 120),
-      niche: null,
+      niche,
       recommendation: breakdown.total >= 70 ? "BUY" : breakdown.total >= 50 ? "WATCH" : "SKIP",
       aiReason: null,
       trendScore,

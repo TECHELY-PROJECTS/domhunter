@@ -31,6 +31,15 @@ const NICHE_ICONS: Record<string, string> = {
   media: "📺", legal: "⚖️", realestate: "🏠", general: "🌐",
 };
 
+const SOURCE_LABELS: Record<string, string> = {
+  brandable: "AI Generated",
+  expired_domains: "Expired",
+  godaddy: "GoDaddy",
+  namejet: "NameJet",
+  icann: "ICANN",
+  sample: "Sample",
+};
+
 const DEFAULT_FILTERS = {
   q: "",
   minScore: 0,
@@ -42,6 +51,8 @@ const DEFAULT_FILTERS = {
   niche: "",
   recommendation: "",
   tier: "",
+  source: "",
+  since: "",
   sortBy: "rarityScore",
   sortDir: "desc",
 };
@@ -85,6 +96,8 @@ export default function Explore() {
       if (filters.niche) params.set("niche", filters.niche);
       if (filters.recommendation) params.set("recommendation", filters.recommendation);
       if (filters.tier) params.set("tier", filters.tier);
+      if (filters.source) params.set("source", filters.source);
+      if (filters.since) params.set("since", filters.since);
       params.set("sortBy", filters.sortBy);
       params.set("sortDir", filters.sortDir);
 
@@ -269,6 +282,49 @@ export default function Explore() {
                   }`}
                 >
                   .{t}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Source */}
+          <div>
+            <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Source</label>
+            <div className="mt-1 flex flex-wrap gap-1">
+              {Object.entries(SOURCE_LABELS).map(([val, label]) => (
+                <button
+                  key={val}
+                  onClick={() => setFilter("source", filters.source === val ? "" : val)}
+                  className={`px-2 py-1 text-xs rounded transition-all ${
+                    filters.source === val
+                      ? "bg-primary text-primary-foreground"
+                      : "bg-muted text-muted-foreground border border-border hover:border-primary/50"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Added */}
+          <div>
+            <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Added</label>
+            <div className="mt-1 flex gap-1">
+              {([
+                { label: "Today", value: new Date(Date.now() - 24 * 3600 * 1000).toISOString() },
+                { label: "Week",  value: new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString() },
+              ] as const).map(({ label, value }) => (
+                <button
+                  key={label}
+                  onClick={() => setFilter("since", filters.since === value ? "" : value)}
+                  className={`flex-1 py-1.5 text-xs rounded font-medium transition-all ${
+                    filters.since === value
+                      ? "bg-primary text-primary-foreground"
+                      : "bg-muted text-muted-foreground border border-border hover:border-primary/50"
+                  }`}
+                >
+                  {label}
                 </button>
               ))}
             </div>

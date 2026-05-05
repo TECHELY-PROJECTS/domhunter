@@ -1,9 +1,11 @@
 import { Router, type IRouter } from "express";
 import { db } from "@workspace/db";
 import { domainsTable, metricsTable, watchlistTable } from "@workspace/db";
-import { eq, sql, desc, asc, and, gte, lte, ilike, inArray } from "drizzle-orm";
+import { eq, sql, desc, asc, and, gte, lte, ilike, inArray, isNull } from "drizzle-orm";
 import { rdapLookup } from "../lib/enrichment/rdap";
 import { rdapToStatus } from "../lib/jobs/enrich-worker";
+import { logger } from "../lib/logger";
+import { computeBrandScore, detectNiche } from "../lib/scoring/niche";
 import {
   ListDomainsQueryParams,
   GetDomainParams,
@@ -226,6 +228,15 @@ router.get("/domains", async (req, res) => {
       }
     }
 
+    // since = ISO date string — show only domains added after this date
+    const since = (req.query as Record<string, string>).since;
+    if (since) {
+      const sinceDate = new Date(since);
+      if (!isNaN(sinceDate.getTime())) {
+        conditions.push(gte(domainsTable.createdAt, sinceDate) as ReturnType<typeof eq>);
+      }
+    }
+
     // Always exclude domains whose SLD contains digits or hyphens
     conditions.push(sql`${domainsTable.sld} !~ '[0-9\\-]'` as ReturnType<typeof eq>);
 
@@ -292,6 +303,97 @@ router.get("/domains", async (req, res) => {
     });
   } catch (err) {
     req.log.error({ err }, "Failed to list domains");
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+/**
+ * DELETE /api/domains
+ * Clear all domains (or by source). Cascades to metrics + watchlist.
+ */
+router.delete("/domains", async (req, res) => {
+  try {
+    const { source } = req.body as { source?: string };
+    if (source) {
+      const rows = await db.select({ id: domainsTable.id }).from(domainsTable).where(eq(domainsTable.source, source));
+      if (rows.length === 0) return res.json({ deleted: 0, source });
+      const ids = rows.map((r) => r.id);
+      await db.delete(domainsTable).where(inArray(domainsTable.id, ids));
+      req.log.info({ source, deleted: ids.length }, "Domains deleted by source");
+      return res.json({ deleted: ids.length, source });
+    }
+    const [{ count }] = await db.select({ count: sql<number>`count(*)::int` }).from(domainsTable);
+    await db.delete(domainsTable);
+    req.log.info({ deleted: count }, "All domains deleted");
+    return res.json({ deleted: count });
+  } catch (err) {
+    req.log.error({ err }, "Failed to delete domains");
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+/**
+ * POST /api/domains/backfill-scores
+ * Backfill brandScore + niche for existing domains that have null values.
+ */
+router.post("/domains/backfill-scores", async (req, res) => {
+  try {
+    const rows = await db
+      .select({
+        domainId: metricsTable.domainId,
+        pronounceScore: metricsTable.pronounceScore,
+        lengthScore: metricsTable.lengthScore,
+        keywordScore: metricsTable.keywordScore,
+        sld: domainsTable.sld,
+      })
+      .from(metricsTable)
+      .leftJoin(domainsTable, eq(metricsTable.domainId, domainsTable.id))
+      .where(isNull(metricsTable.brandScore));
+
+    res.json({ ok: true, queued: rows.length, message: `Backfilling ${rows.length} domains in background` });
+
+    (async () => {
+      const now = new Date();
+      // Build a CASE expression to update all rows in one query per batch of 500
+      const BATCH = 500;
+      let updated = 0;
+      for (let i = 0; i < rows.length; i += BATCH) {
+        const batch = rows.slice(i, i + BATCH);
+        const validRows = batch.filter((r) => r.sld);
+        if (validRows.length === 0) continue;
+
+        // Use sql template to build a bulk update
+        const casesBrand = sql.join(
+          validRows.map((r) => {
+            const brand = computeBrandScore(r.pronounceScore ?? 50, r.lengthScore ?? 50, r.keywordScore ?? 50);
+            return sql`WHEN ${metricsTable.domainId} = ${r.domainId} THEN ${brand}`;
+          }),
+          sql` `,
+        );
+        const casesNiche = sql.join(
+          validRows.map((r) => {
+            const niche = detectNiche(r.sld!);
+            return sql`WHEN ${metricsTable.domainId} = ${r.domainId} THEN ${niche}`;
+          }),
+          sql` `,
+        );
+        const ids = validRows.map((r) => r.domainId);
+
+        await db
+          .update(metricsTable)
+          .set({
+            brandScore: sql`(CASE ${casesBrand} END)::double precision`,
+            niche: sql`(CASE ${casesNiche} END)::text`,
+            updatedAt: now,
+          })
+          .where(inArray(metricsTable.domainId, ids));
+
+        updated += validRows.length;
+      }
+      logger.info({ updated }, "Backfill complete");
+    })().catch((err) => logger.error({ err }, "Backfill failed"));
+  } catch (err) {
+    req.log.error({ err }, "Failed to start backfill");
     res.status(500).json({ error: "Internal server error" });
   }
 });

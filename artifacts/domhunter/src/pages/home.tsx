@@ -5,7 +5,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
-import { RefreshCw, Sparkles, Database } from "lucide-react";
+import { RefreshCw, Sparkles, Database, Trash2, Wand2 } from "lucide-react";
 import { useState } from "react";
 
 export default function Home() {
@@ -18,10 +18,12 @@ export default function Home() {
   const [syncLoading, setSyncLoading] = useState(false);
   const [sampleLoading, setSampleLoading] = useState(false);
   const [brandableLoading, setBrandableLoading] = useState(false);
+  const [clearLoading, setClearLoading] = useState(false);
+  const [backfillLoading, setBackfillLoading] = useState(false);
 
   const refetchAll = () => { refetchStats(); refetchRecent(); refetchTop(); refetchExpiring(); };
 
-  const anyLoading = syncLoading || sampleLoading || brandableLoading;
+  const anyLoading = syncLoading || sampleLoading || brandableLoading || clearLoading || backfillLoading;
 
   const handleIngest = async () => {
     setSyncLoading(true);
@@ -97,6 +99,47 @@ export default function Home() {
     }
   };
 
+  const handleBackfill = async () => {
+    setBackfillLoading(true);
+    try {
+      const res = await fetch("/api/domains/backfill-scores", { method: "POST" });
+      const data = await res.json() as { message?: string; queued?: number; error?: string };
+      if (!res.ok) {
+        toast({ title: "Backfill Failed", description: data.error ?? "Error", variant: "destructive" });
+      } else {
+        toast({ title: "Backfill Started", description: data.message ?? `Filling scores for ${data.queued} domains in background.` });
+      }
+    } catch {
+      toast({ title: "Backfill Failed", description: "Network error", variant: "destructive" });
+    } finally {
+      setBackfillLoading(false);
+    }
+  };
+
+  const handleClearAll = async (source?: string) => {
+    const label = source ? `all "${source}" domains` : "ALL domains";
+    if (!window.confirm(`Delete ${label}? This cannot be undone.`)) return;
+    setClearLoading(true);
+    try {
+      const res = await fetch("/api/domains", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: source ? JSON.stringify({ source }) : "{}",
+      });
+      const data = await res.json() as { deleted?: number; error?: string };
+      if (!res.ok) {
+        toast({ title: "Delete Failed", description: data.error ?? "Error", variant: "destructive" });
+      } else {
+        toast({ title: "Deleted", description: `Removed ${data.deleted?.toLocaleString()} domains.` });
+        refetchAll();
+      }
+    } catch {
+      toast({ title: "Delete Failed", description: "Network error", variant: "destructive" });
+    } finally {
+      setClearLoading(false);
+    }
+  };
+
   return (
     <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
       <div className="flex justify-between items-center flex-wrap gap-3">
@@ -128,6 +171,26 @@ export default function Home() {
           <Button variant="outline" size="sm" onClick={handleIngest} disabled={anyLoading}>
             <RefreshCw className={`w-4 h-4 mr-2 ${syncLoading ? "animate-spin" : ""}`} />
             {syncLoading ? "Syncing..." : "Force Sync"}
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleBackfill}
+            disabled={anyLoading}
+            className="gap-2 border-green-500/40 text-green-400 hover:bg-green-500/10 hover:text-green-300"
+          >
+            <Wand2 className={`w-4 h-4 ${backfillLoading ? "animate-pulse" : ""}`} />
+            {backfillLoading ? "Filling..." : "Fill Missing Scores"}
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => handleClearAll()}
+            disabled={anyLoading}
+            className="gap-2 border-red-500/40 text-red-400 hover:bg-red-500/10 hover:text-red-300"
+          >
+            <Trash2 className={`w-4 h-4 ${clearLoading ? "animate-pulse" : ""}`} />
+            {clearLoading ? "Deleting..." : "Clear All"}
           </Button>
         </div>
       </div>
