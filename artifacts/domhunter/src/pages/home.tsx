@@ -5,7 +5,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
-import { RefreshCw, Sparkles } from "lucide-react";
+import { RefreshCw, Sparkles, Database } from "lucide-react";
 import { useState } from "react";
 
 export default function Home() {
@@ -15,11 +15,16 @@ export default function Home() {
   const { data: expiring, isLoading: expiringLoading, refetch: refetchExpiring } = useGetExpiringSoonDomains({ limit: 5 });
 
   const { toast } = useToast();
+  const [syncLoading, setSyncLoading] = useState(false);
+  const [sampleLoading, setSampleLoading] = useState(false);
   const [brandableLoading, setBrandableLoading] = useState(false);
 
   const refetchAll = () => { refetchStats(); refetchRecent(); refetchTop(); refetchExpiring(); };
 
+  const anyLoading = syncLoading || sampleLoading || brandableLoading;
+
   const handleIngest = async () => {
+    setSyncLoading(true);
     try {
       const res = await fetch("/api/ingest", {
         method: "POST",
@@ -43,6 +48,30 @@ export default function Home() {
       }
     } catch {
       toast({ title: "Sync Failed", description: "Network error — check server is running.", variant: "destructive" });
+    } finally {
+      setSyncLoading(false);
+    }
+  };
+
+  const handleSampleData = async () => {
+    setSampleLoading(true);
+    try {
+      const res = await fetch("/api/ingest", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ source: "sample" }),
+      });
+      const data = await res.json() as { message?: string; error?: string };
+      if (!res.ok) {
+        toast({ title: "Failed", description: data.error ?? "Could not load sample data", variant: "destructive" });
+      } else {
+        toast({ title: "Sample Data Loaded", description: data.message ?? "20 sample domains added." });
+        refetchAll();
+      }
+    } catch {
+      toast({ title: "Failed", description: "Network error", variant: "destructive" });
+    } finally {
+      setSampleLoading(false);
     }
   };
 
@@ -75,20 +104,30 @@ export default function Home() {
           <h1 className="text-3xl font-bold tracking-tight">Terminal</h1>
           <p className="text-muted-foreground mt-1">Live market overview and opportunities.</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleSampleData}
+            disabled={anyLoading}
+            className="gap-2 border-blue-500/40 text-blue-400 hover:bg-blue-500/10 hover:text-blue-300"
+          >
+            <Database className={`w-4 h-4 ${sampleLoading ? "animate-pulse" : ""}`} />
+            {sampleLoading ? "Loading..." : "Load Sample Data"}
+          </Button>
           <Button
             variant="outline"
             size="sm"
             onClick={handleBrandable}
-            disabled={brandableLoading || triggerIngest.isPending}
+            disabled={anyLoading}
             className="gap-2 border-purple-500/40 text-purple-400 hover:bg-purple-500/10 hover:text-purple-300"
           >
             <Sparkles className={`w-4 h-4 ${brandableLoading ? "animate-pulse" : ""}`} />
             {brandableLoading ? "Generating..." : "Generate Brandable"}
           </Button>
-          <Button variant="outline" size="sm" onClick={handleIngest} disabled={triggerIngest.isPending || brandableLoading}>
-            <RefreshCw className={`w-4 h-4 mr-2 ${triggerIngest.isPending ? "animate-spin" : ""}`} />
-            {triggerIngest.isPending ? "Syncing..." : "Force Sync"}
+          <Button variant="outline" size="sm" onClick={handleIngest} disabled={anyLoading}>
+            <RefreshCw className={`w-4 h-4 mr-2 ${syncLoading ? "animate-spin" : ""}`} />
+            {syncLoading ? "Syncing..." : "Force Sync"}
           </Button>
         </div>
       </div>
@@ -110,6 +149,13 @@ export default function Home() {
               {topScoringLoading ? (
                 <div className="space-y-2">
                   {[...Array(5)].map((_, i) => <Skeleton key={i} className="h-12 w-full" />)}
+                </div>
+              ) : topScoring?.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  <p className="mb-3">No domains yet.</p>
+                  <Button size="sm" variant="outline" onClick={handleSampleData} disabled={anyLoading} className="gap-2">
+                    <Database className="w-4 h-4" /> Load Sample Data
+                  </Button>
                 </div>
               ) : (
                 <div className="space-y-2">
@@ -136,7 +182,7 @@ export default function Home() {
               )}
             </CardContent>
           </Card>
-          
+
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-lg">Recently Discovered</CardTitle>

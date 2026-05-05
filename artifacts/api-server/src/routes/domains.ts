@@ -226,6 +226,9 @@ router.get("/domains", async (req, res) => {
       }
     }
 
+    // Always exclude domains whose SLD contains digits or hyphens
+    conditions.push(sql`${domainsTable.sld} !~ '[0-9\\-]'` as ReturnType<typeof eq>);
+
     const sortMap: Record<string, unknown> = {
       rarityScore: metricsTable.rarityScore,
       brandScore: metricsTable.brandScore,
@@ -238,10 +241,16 @@ router.get("/domains", async (req, res) => {
       currentBid: domainsTable.currentBid,
     };
 
-    const sortCol = sortMap[params.sortBy ?? "rarityScore"] ?? metricsTable.rarityScore;
     const orderFn = params.sortDir === "asc" ? asc : desc;
 
-    const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+    // sldLength is a computed expression, handle separately
+    const sortByLength = params.sortBy === "sldLength";
+    const lengthExpr = sql<number>`length(${domainsTable.sld})`;
+    const sortCol = sortByLength
+      ? lengthExpr
+      : (sortMap[params.sortBy ?? "rarityScore"] ?? metricsTable.rarityScore);
+
+    const whereClause = and(...conditions);
 
     const baseQuery = db
       .select({
@@ -270,10 +279,8 @@ router.get("/domains", async (req, res) => {
       .$dynamic();
 
     const [domains, [{ total }]] = await Promise.all([
-      whereClause
-        ? baseQuery.where(whereClause).orderBy(orderFn(sortCol as Parameters<typeof desc>[0])).limit(limit).offset(offset)
-        : baseQuery.orderBy(orderFn(sortCol as Parameters<typeof desc>[0])).limit(limit).offset(offset),
-      whereClause ? countQuery.where(whereClause) : countQuery,
+      baseQuery.where(whereClause).orderBy(orderFn(sortCol as Parameters<typeof desc>[0])).limit(limit).offset(offset),
+      countQuery.where(whereClause),
     ]);
 
     res.json({

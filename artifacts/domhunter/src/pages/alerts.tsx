@@ -29,6 +29,8 @@ type AlertFilter = {
   minScore?: number;
   minBrandScore?: number;
   minDA?: number;
+  maxSldLength?: number;
+  mustContainWord?: string;
   recommendation?: string;
   niche?: string;
   tier?: string;
@@ -42,6 +44,8 @@ const formSchema = z.object({
   minScore: z.number().min(0).max(100),
   minBrandScore: z.number().min(0).max(100),
   minDA: z.number().min(0).max(100),
+  maxSldLength: z.number().min(1).max(20),
+  mustContainWord: z.string().optional(),
   recommendation: z.string().optional(),
   tier: z.string().optional(),
 });
@@ -120,6 +124,8 @@ function AlertCard({ alert, onToggle, onDelete, onSendNow }: {
     filter.minBrandScore != null && filter.minBrandScore > 0 && `Brand ≥ ${filter.minBrandScore}`,
     filter.minScore      != null && filter.minScore > 0      && `Rarity ≥ ${filter.minScore}`,
     filter.minDA         != null && filter.minDA > 0         && `DA ≥ ${filter.minDA}`,
+    filter.maxSldLength  != null                             && `Len ≤ ${filter.maxSldLength}`,
+    filter.mustContainWord && filter.mustContainWord.trim()  && `Contains "${filter.mustContainWord}"`,
     filter.recommendation && filter.recommendation !== "any" && filter.recommendation,
     filter.tier          && filter.tier !== "any"            && filter.tier.charAt(0).toUpperCase() + filter.tier.slice(1),
     filter.tlds?.length  && filter.tlds.join(", "),
@@ -248,6 +254,8 @@ export default function Alerts() {
       minScore: 55,
       minBrandScore: 65,
       minDA: 0,
+      maxSldLength: 12,
+      mustContainWord: "",
       recommendation: "BUY",
       tier: "any",
     },
@@ -273,9 +281,11 @@ export default function Alerts() {
 
   const onSubmit = (values: z.infer<typeof formSchema>) => {
     const filter: AlertFilter = {};
-    if (values.minScore > 0)      filter.minScore      = values.minScore;
-    if (values.minBrandScore > 0) filter.minBrandScore = values.minBrandScore;
-    if (values.minDA > 0)         filter.minDA         = values.minDA;
+    if (values.minScore > 0)          filter.minScore      = values.minScore;
+    if (values.minBrandScore > 0)     filter.minBrandScore = values.minBrandScore;
+    if (values.minDA > 0)             filter.minDA         = values.minDA;
+    if (values.maxSldLength < 20)     filter.maxSldLength  = values.maxSldLength;
+    if (values.mustContainWord?.trim()) filter.mustContainWord = values.mustContainWord.trim().toLowerCase();
     if (values.recommendation && values.recommendation !== "any") filter.recommendation = values.recommendation;
     if (values.tier && values.tier !== "any") filter.tier = values.tier;
     createMut.mutate({
@@ -418,6 +428,28 @@ export default function Alerts() {
                     <FormDescription className="text-xs">Minimum OpenPageRank DA. Set to 0 to include domains with no DA data.</FormDescription>
                   </FormItem>
                 )} />
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                  <FormField control={form.control} name="maxSldLength" render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Max Domain Length — <span className="text-primary font-mono">{field.value === 20 ? "Any" : `≤${field.value} chars`}</span></FormLabel>
+                      <FormControl>
+                        <Slider min={1} max={20} step={1} value={[field.value]}
+                          onValueChange={([v]) => field.onChange(v)} className="mt-2" />
+                      </FormControl>
+                      <FormDescription className="text-xs">Max SLD character count. 12 is a good threshold for hand-reg targets.</FormDescription>
+                    </FormItem>
+                  )} />
+                  <FormField control={form.control} name="mustContainWord" render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Must Contain Word</FormLabel>
+                      <FormControl>
+                        <Input placeholder="e.g. fund, cloud, labs..." {...field} />
+                      </FormControl>
+                      <FormDescription className="text-xs">Only alert domains whose SLD contains this text (case-insensitive). Leave blank to match any.</FormDescription>
+                    </FormItem>
+                  )} />
+                </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <FormField control={form.control} name="recommendation" render={({ field }) => (

@@ -47,6 +47,7 @@ export interface AlertFilter {
   maxDaysToExpiry?: number;
   minDaysToExpiry?: number;
   maxSldLength?: number;        // max characters in SLD, e.g. 12
+  mustContainWord?: string;     // SLD must contain this substring (case-insensitive)
   watchDomain?: string;         // watch a specific domain until it drops
   recommendation?: string;
   niche?: string;
@@ -77,10 +78,18 @@ export function matchesFilter(
     return d.name === filter.watchDomain && CHEAP_STATUSES.has(statusUpper);
   }
 
+  // ── Always exclude SLDs with numbers or hyphens ───────────────────────────
+  const sld = (d.sld ?? d.name?.split(".")[0] ?? "").toLowerCase();
+  if (/[0-9-]/.test(sld)) return false;
+
   // ── SLD length guard ───────────────────────────────────────────────────────
   if (filter.maxSldLength != null) {
-    const sldLen = (d.sld ?? d.name?.split(".")[0] ?? "").length;
-    if (sldLen > filter.maxSldLength) return false;
+    if (sld.length > filter.maxSldLength) return false;
+  }
+
+  // ── Must-contain word ──────────────────────────────────────────────────────
+  if (filter.mustContainWord && filter.mustContainWord.trim()) {
+    if (!sld.includes(filter.mustContainWord.trim().toLowerCase())) return false;
   }
 
   const mode = filter.statusMode ?? "cheap";

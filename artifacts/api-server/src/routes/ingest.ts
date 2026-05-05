@@ -70,6 +70,11 @@ function parseDomainParts(fqdn: string): { sld: string; tld: string } | null {
   return { sld, tld };
 }
 
+// Returns true if the SLD contains digits or hyphens — these are excluded globally
+function sldHasNumberOrDash(sld: string): boolean {
+  return /[0-9-]/.test(sld);
+}
+
 async function persistFeedItems(
   items: DomainFeedItem[],
   defaultStatus: "AUCTION" | "EXPIRING" | "EXPIRED" | "AVAILABLE" | "UNKNOWN" = "UNKNOWN",
@@ -81,6 +86,9 @@ async function persistFeedItems(
   for (const item of items) {
     const parts = parseDomainParts(item.name);
     if (!parts) continue;
+
+    // Skip domains with numbers or hyphens in the SLD
+    if (sldHasNumberOrDash(parts.sld)) continue;
 
     const existing = await db.query.domainsTable.findFirst({
       where: eq(domainsTable.name, item.name),

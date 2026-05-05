@@ -359,6 +359,8 @@ export default function Explore() {
               <SelectItem value="domainAuthority-desc">DA ↓</SelectItem>
               <SelectItem value="backlinks-desc">Backlinks ↓</SelectItem>
               <SelectItem value="domainAge-desc">Age ↓</SelectItem>
+              <SelectItem value="sldLength-asc">Length ↑ (shortest first)</SelectItem>
+              <SelectItem value="sldLength-desc">Length ↓ (longest first)</SelectItem>
               <SelectItem value="auctionEndAt-asc">Ending Soon ↑</SelectItem>
             </SelectContent>
           </Select>
