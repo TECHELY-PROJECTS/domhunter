@@ -19,4 +19,5 @@ export const ListDomainsSortBy = {
   createdAt: "createdAt",
   auctionEndAt: "auctionEndAt",
   currentBid: "currentBid",
+  sldLength: "sldLength",
 } as const;

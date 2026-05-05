@@ -111,7 +111,7 @@ paths:
           in: query
           schema:
             type: string
-            enum: [rarityScore, brandScore, domainAuthority, estimatedValue, backlinks, domainAge, createdAt, auctionEndAt, currentBid]
+            enum: [rarityScore, brandScore, domainAuthority, estimatedValue, backlinks, domainAge, createdAt, auctionEndAt, currentBid, sldLength]
             default: rarityScore
         - name: sortDir
           in: query

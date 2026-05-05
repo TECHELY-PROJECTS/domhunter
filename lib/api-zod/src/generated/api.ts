@@ -55,6 +55,7 @@ export const ListDomainsQueryParams = zod.object({
       "createdAt",
       "auctionEndAt",
       "currentBid",
+      "sldLength",
     ])
     .default(listDomainsQuerySortByDefault),
   sortDir: zod.enum(["asc", "desc"]).default(listDomainsQuerySortDirDefault),
@@ -521,6 +522,6 @@ export const triggerIngestBodySourceDefault = `sample`;
 
 export const TriggerIngestBody = zod.object({
   source: zod
-    .enum(["godaddy", "namejet", "expired_domains", "icann", "sample", "brandable"])
+    .enum(["godaddy", "namejet", "expired_domains", "icann", "sample"])
     .default(triggerIngestBodySourceDefault),
 });
