@@ -15,4 +15,5 @@ export const IngestBodySource = {
   expired_domains: "expired_domains",
   icann: "icann",
   sample: "sample",
+  brandable: "brandable",
 } as const;

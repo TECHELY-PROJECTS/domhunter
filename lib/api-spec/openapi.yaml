@@ -739,7 +739,7 @@ components:
       properties:
         source:
           type: string
-          enum: [godaddy, namejet, expired_domains, icann, sample]
+          enum: [godaddy, namejet, expired_domains, icann, sample, brandable]
           default: sample
       required:
         - source
