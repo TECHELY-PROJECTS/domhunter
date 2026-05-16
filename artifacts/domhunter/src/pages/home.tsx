@@ -31,21 +31,26 @@ export default function Home() {
       const res = await fetch("/api/ingest", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ source: "expired_domains" }),
+        body: JSON.stringify({ source: "dropcatch" }),
       });
-      const data = await res.json() as { message?: string; error?: string };
+      const data = await res.json() as { message?: string; error?: string; top30?: unknown[] };
       if (!res.ok) {
         const detail = data.error ?? "Unknown error";
-        const isSessionMissing = detail.toLowerCase().includes("expireddomains_session");
         toast({
           title: "Sync Failed",
-          description: isSessionMissing
-            ? "EXPIREDDOMAINS_SESSION cookie not set. Add it in your Render environment variables."
+          description: detail.includes("Could not auto-fetch")
+            ? "DropCatch CSV not available for auto-download. Upload manually from dropcatch.com/downloads."
             : detail,
           variant: "destructive",
         });
       } else {
-        toast({ title: "Sync Complete", description: data.message ?? "Domains fetched." });
+        const top30Count = Array.isArray(data.top30) ? data.top30.length : 0;
+        toast({
+          title: "Sync Complete",
+          description: top30Count > 0
+            ? `${data.message} — ${top30Count} top picks identified!`
+            : data.message ?? "Domains fetched.",
+        });
         refetchAll();
       }
     } catch {
