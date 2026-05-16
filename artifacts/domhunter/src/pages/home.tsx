@@ -35,15 +35,18 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ source: "dropcatch" }),
       });
-      const data = await res.json() as { message?: string; error?: string; top30?: unknown[] };
+      const data = await res.json() as { message?: string; error?: string; top30?: unknown[]; needsUpload?: boolean };
       if (!res.ok) {
         const detail = data.error ?? "Unknown error";
         toast({
           title: "Sync Failed",
-          description: detail.includes("Could not auto-fetch")
-            ? "DropCatch CSV not available for auto-download. Upload manually from dropcatch.com/downloads."
-            : detail,
+          description: detail,
           variant: "destructive",
+        });
+      } else if (data.needsUpload) {
+        toast({
+          title: "Upload Required",
+          description: "Auto-download not available. Download 'Dropping Today' CSV from dropcatch.com/downloads and click 'Upload CSV'.",
         });
       } else {
         const top30Count = Array.isArray(data.top30) ? data.top30.length : 0;

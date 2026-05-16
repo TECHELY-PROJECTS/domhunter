@@ -335,11 +335,15 @@ router.post("/ingest", async (req, res) => {
         req.log.info("Parsing uploaded DropCatch CSV...");
         items = parseUploadedCSV(csvContent);
       } else {
-        // Auto-fetch from DropCatch downloads page
+        // Auto-fetch from DropCatch direct CSV download
         const fetched = await fetchDropCatchCSV();
         if (!fetched) {
-          return res.status(400).json({
-            error: "Could not auto-fetch DropCatch CSV (DroppingToday.csv). Please download it manually from https://www.dropcatch.com/downloads and use the 'Upload CSV' button.",
+          return res.status(200).json({
+            message: "Auto-fetch unavailable — please use the Upload CSV button.",
+            error: "Could not auto-fetch DropCatch CSV. Download 'Dropping Today' from https://www.dropcatch.com/downloads and click 'Upload CSV'.",
+            needsUpload: true,
+            ingested: 0,
+            top30: [],
           });
         }
         items = fetched;
