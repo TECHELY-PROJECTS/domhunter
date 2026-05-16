@@ -11,7 +11,6 @@ import {
   tldScore,
 } from "../lib/scoring/index";
 import { detectNiche, computeBrandScore } from "../lib/scoring/niche";
-import { computeNameBioValue } from "../lib/scoring/namebio-valuation";
 import type { DomainFeedItem } from "../lib/sources/types";
 import { fetchGoDaddyRSS } from "../lib/sources/godaddy-rss";
 import { fetchNameJetRSS } from "../lib/sources/namejet-rss";
@@ -132,16 +131,6 @@ async function persistFeedItems(
     const niche = detectNiche(parts.sld);
     const brandScore = computeBrandScore(breakdown.pronounceability, breakdown.length, breakdown.keywordValue);
 
-    // Compute NameBio-calibrated value
-    const score = localPreScore(item.name);
-    const estimatedValue = computeNameBioValue(parts.sld, parts.tld, {
-      isSingleWord: score?.tier === "priority1",
-      isFiveLetter: score?.tier === "five_letter",
-      isWordPlusLetter: score?.tier === "priority2",
-      isTwoWord: score?.tier === "priority3",
-      backlinks: item.backlinks ?? null,
-    });
-
     await db.insert(metricsTable).values({
       id: randomUUID(),
       domainId,
@@ -156,7 +145,7 @@ async function persistFeedItems(
       rarityScore: breakdown.total,
       rarityTier: tier,
       brandScore,
-      estimatedValue,
+      estimatedValue: Math.round(breakdown.total * 120),
       niche,
       recommendation: breakdown.total >= 70 ? "BUY" : breakdown.total >= 50 ? "WATCH" : "SKIP",
       aiReason: null,
@@ -209,23 +198,6 @@ async function inlineEnrichDomains(domainNames: string[]): Promise<void> {
         }
       }
 
-      // Detect word type for NameBio valuation
-      const score = localPreScore(name);
-      const isSingleWord = score?.tier === "priority1";
-      const isFiveLetter = score?.tier === "five_letter";
-      const isWordPlusLetter = score?.tier === "priority2";
-      const isTwoWord = score?.tier === "priority3";
-
-      // Compute NameBio-calibrated value
-      const estimatedValue = computeNameBioValue(dbDomain.sld, dbDomain.tld, {
-        isSingleWord,
-        isFiveLetter,
-        isWordPlusLetter,
-        isTwoWord,
-        domainAuthority: da ?? null,
-        backlinks: bl?.totalLinks ?? null,
-      });
-
       // Update metrics with real data
       const existing = await db.query.metricsTable.findFirst({
         where: eq(metricsTable.domainId, dbDomain.id),
@@ -238,7 +210,6 @@ async function inlineEnrichDomains(domainNames: string[]): Promise<void> {
             backlinks: bl?.totalLinks ?? existing.backlinks,
             referringDomains: bl?.referringDomains ?? existing.referringDomains,
             domainAge: rdap?.ageYears ?? existing.domainAge,
-            estimatedValue,
             enrichedAt: new Date(),
             updatedAt: new Date(),
           })
@@ -447,14 +418,13 @@ router.post("/ingest", async (req, res) => {
 
       req.log.info({ rawCount: items.length }, "DropCatch domains pre-filtered (length ≤11, alpha-only, valuable TLDs)");
 
-      // ── STRICT FILTERING: Only persist qualifying domains (top 50%) ──────
+      // ── STRICT FILTERING: Only persist top 1000 qualifying domains ──────
       // Run local pre-scoring to identify truly valuable candidates
       const candidates = preScoreAndFilter(items, items.length); // score ALL items
       req.log.info({ candidates: candidates.length, raw: items.length }, "Local pre-scoring complete");
 
-      // Only keep the top 50% of qualifying domains (those that scored 45+)
-      const maxToKeep = Math.ceil(candidates.length * 0.5);
-      const qualifyingCandidates = candidates.slice(0, maxToKeep);
+      // Only keep the top 1000 qualifying domains (best of the best)
+      const qualifyingCandidates = candidates.slice(0, 1000);
 
       // Only persist the qualifying domains (not every domain from the CSV)
       const qualifyingItems = qualifyingCandidates.map((c) => ({
