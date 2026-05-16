@@ -34,6 +34,7 @@ const NICHE_ICONS: Record<string, string> = {
 const SOURCE_LABELS: Record<string, string> = {
   brandable: "AI Generated",
   expired_domains: "Expired",
+  dropcatch: "DropCatch",
   godaddy: "GoDaddy",
   namejet: "NameJet",
   icann: "ICANN",
