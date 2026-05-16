@@ -339,7 +339,7 @@ router.post("/ingest", async (req, res) => {
         const fetched = await fetchDropCatchCSV();
         if (!fetched) {
           return res.status(400).json({
-            error: "Could not auto-fetch DropCatch CSV. Please upload the CSV manually by including a 'csv' field in the request body with the file content. Download from: https://www.dropcatch.com/downloads",
+            error: "Could not auto-fetch DropCatch CSV (DroppingToday.csv). Please download it manually from https://www.dropcatch.com/downloads and use the 'Upload CSV' button.",
           });
         }
         items = fetched;
