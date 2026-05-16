@@ -15,6 +15,8 @@ import type { DomainFeedItem } from "../lib/sources/types";
 import { fetchGoDaddyRSS } from "../lib/sources/godaddy-rss";
 import { fetchNameJetRSS } from "../lib/sources/namejet-rss";
 import { fetchExpiredDomainsScrape } from "../lib/sources/expireddomains";
+import { fetchDropCatchCSV, parseUploadedCSV } from "../lib/sources/dropcatch";
+import { preScoreAndFilter, aiValuateTop30 } from "../lib/scoring/ai-valuation";
 import { generateBrandableDomains } from "../lib/sources/brandable-generator";
 import {
   getICANNAuthToken,
@@ -318,6 +320,65 @@ router.post("/ingest", async (req, res) => {
       const { count: inserted, newNames } = await persistFeedItems(items, "AVAILABLE");
       await queueDomainEnrichment(newNames.slice(0, 500));
       return res.status(202).json({ message: `Ingested ${inserted} new domains from ICANN zone file (${items.length} sampled)`, queued: newNames.length });
+    }
+
+    if (source === "dropcatch") {
+      req.log.info("Processing DropCatch dropping domains...");
+
+      let items: DomainFeedItem[];
+
+      // Check if CSV content was uploaded in the request body
+      const csvContent = (req.body as any).csv as string | undefined;
+
+      if (csvContent) {
+        // Manual upload: parse the provided CSV content
+        req.log.info("Parsing uploaded DropCatch CSV...");
+        items = parseUploadedCSV(csvContent);
+      } else {
+        // Auto-fetch from DropCatch downloads page
+        const fetched = await fetchDropCatchCSV();
+        if (!fetched) {
+          return res.status(400).json({
+            error: "Could not auto-fetch DropCatch CSV. Please upload the CSV manually by including a 'csv' field in the request body with the file content. Download from: https://www.dropcatch.com/downloads",
+          });
+        }
+        items = fetched;
+      }
+
+      req.log.info({ rawCount: items.length }, "DropCatch domains pre-filtered (length ≤11, alpha-only, valuable TLDs)");
+
+      // Persist all pre-filtered domains to DB
+      const { count: inserted, newNames } = await persistFeedItems(items, "EXPIRED");
+
+      // Run local pre-scoring to find top candidates for AI valuation
+      const candidates = preScoreAndFilter(items, 200);
+      req.log.info({ candidates: candidates.length }, "Local pre-scoring complete — sending to AI valuation");
+
+      // AI valuation: select top 30 most valuable domains
+      let top30 = null;
+      if (candidates.length > 0) {
+        try {
+          top30 = await aiValuateTop30(candidates);
+          req.log.info({ top30Count: top30.length }, "AI valuation complete — top 30 selected");
+        } catch (err) {
+          req.log.error({ err }, "AI valuation failed — domains still ingested");
+        }
+      }
+
+      // Queue enrichment for the top candidates only (cost-efficient)
+      const enrichNames = top30
+        ? top30.map((d) => d.domain).filter((n) => newNames.includes(n))
+        : newNames.slice(0, 50);
+      await queueDomainEnrichment(enrichNames);
+
+      return res.status(202).json({
+        message: `DropCatch: ${items.length} pre-filtered → ${inserted} new ingested → ${candidates.length} scored → ${top30?.length ?? 0} top picks`,
+        ingested: inserted,
+        preFiltered: items.length,
+        candidates: candidates.length,
+        top30: top30 ?? [],
+        queued: enrichNames.length,
+      });
     }
 
     return res.status(400).json({ error: `Unknown source: ${source}` });

@@ -8,6 +8,7 @@ import ingestRouter from "./ingest";
 import enrichmentRouter from "./enrichment";
 import scoreRouter from "./score";
 import alertsRouter from "./alerts";
+import valuationRouter from "./valuation";
 
 const router: IRouter = Router();
 
@@ -20,5 +21,6 @@ router.use(ingestRouter);
 router.use(enrichmentRouter);
 router.use(scoreRouter);
 router.use(alertsRouter);
+router.use(valuationRouter);
 
 export default router;
