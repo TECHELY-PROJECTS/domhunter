@@ -529,6 +529,8 @@ export const TriggerIngestBody = zod.object({
       "icann",
       "sample",
       "brandable",
+      "dropcatch",
     ])
     .default(triggerIngestBodySourceDefault),
+  csv: zod.string().optional(),
 });

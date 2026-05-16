@@ -29,10 +29,10 @@ async function runIngest(): Promise<void> {
     const res = await fetch(`http://localhost:${port}/api/ingest`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ source: "expired_domains" }),
+      body: JSON.stringify({ source: "dropcatch" }),
     });
-    const data = (await res.json()) as { ingested?: number };
-    logger.info({ ingested: data?.ingested }, "Scheduled ingest complete");
+    const data = (await res.json()) as { ingested?: number; top30?: unknown[] };
+    logger.info({ ingested: data?.ingested, top30: (data?.top30 as any[])?.length }, "Scheduled DropCatch ingest complete");
     lastIngestAt = new Date();
   } catch (err) {
     logger.error({ err }, "Scheduled ingest failed");
