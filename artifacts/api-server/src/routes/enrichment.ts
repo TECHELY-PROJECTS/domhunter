@@ -11,6 +11,8 @@ import {
   getRarityTier,
   tldScore,
 } from "../lib/scoring/index";
+import { computeNameBioValue } from "../lib/scoring/namebio-valuation";
+import { localPreScore } from "../lib/scoring/ai-valuation";
 import { aiScoreDomain } from "../lib/ai/client";
 
 const router: IRouter = Router();
@@ -75,7 +77,18 @@ router.post("/domains/:fqdn/enrich", async (req, res) => {
       rarityTier: tier,
       trendScore,
       brandScore: aiVal?.brandScore ?? domain.metrics?.brandScore ?? null,
-      estimatedValue: aiVal?.estimatedValue ?? domain.metrics?.estimatedValue ?? null,
+      estimatedValue: (() => {
+        // Use NameBio-calibrated valuation (consistent with homepage)
+        const score = localPreScore(fqdn);
+        return computeNameBioValue(domain.sld, domain.tld, {
+          isSingleWord: score?.tier === "priority1",
+          isFiveLetter: score?.tier === "five_letter",
+          isWordPlusLetter: score?.tier === "priority2",
+          isTwoWord: score?.tier === "priority3",
+          domainAuthority: da,
+          backlinks: bl,
+        });
+      })(),
       niche: aiVal?.niche ?? domain.metrics?.niche ?? null,
       recommendation: aiVal?.recommendation ?? domain.metrics?.recommendation ?? null,
       aiReason: aiVal?.reason ?? domain.metrics?.aiReason ?? null,

@@ -11,13 +11,18 @@ import {
   tldScore,
 } from "../lib/scoring/index";
 import { detectNiche, computeBrandScore } from "../lib/scoring/niche";
+import { computeNameBioValue } from "../lib/scoring/namebio-valuation";
 import type { DomainFeedItem } from "../lib/sources/types";
 import { fetchGoDaddyRSS } from "../lib/sources/godaddy-rss";
 import { fetchNameJetRSS } from "../lib/sources/namejet-rss";
 import { fetchExpiredDomainsScrape } from "../lib/sources/expireddomains";
 import { fetchDropCatchCSV, parseUploadedCSV } from "../lib/sources/dropcatch";
-import { preScoreAndFilter, aiValuateTop30 } from "../lib/scoring/ai-valuation";
+import { preScoreAndFilter, aiValuateTop30, localPreScore } from "../lib/scoring/ai-valuation";
 import { generateBrandableDomains } from "../lib/sources/brandable-generator";
+import { getPageRank } from "../lib/enrichment/openpagerank";
+import { rdapLookup } from "../lib/enrichment/rdap";
+import { getBacklinks } from "../lib/enrichment/openlinks";
+import { logger } from "../lib/logger";
 import {
   getICANNAuthToken,
   downloadComZoneFile,
@@ -127,6 +132,16 @@ async function persistFeedItems(
     const niche = detectNiche(parts.sld);
     const brandScore = computeBrandScore(breakdown.pronounceability, breakdown.length, breakdown.keywordValue);
 
+    // Compute NameBio-calibrated value
+    const score = localPreScore(item.name);
+    const estimatedValue = computeNameBioValue(parts.sld, parts.tld, {
+      isSingleWord: score?.tier === "priority1",
+      isFiveLetter: score?.tier === "five_letter",
+      isWordPlusLetter: score?.tier === "priority2",
+      isTwoWord: score?.tier === "priority3",
+      backlinks: item.backlinks ?? null,
+    });
+
     await db.insert(metricsTable).values({
       id: randomUUID(),
       domainId,
@@ -141,7 +156,7 @@ async function persistFeedItems(
       rarityScore: breakdown.total,
       rarityTier: tier,
       brandScore,
-      estimatedValue: Math.round(breakdown.total * 120),
+      estimatedValue,
       niche,
       recommendation: breakdown.total >= 70 ? "BUY" : breakdown.total >= 50 ? "WATCH" : "SKIP",
       aiReason: null,
@@ -155,6 +170,87 @@ async function persistFeedItems(
   }
 
   return { count: inserted, newNames };
+}
+
+/**
+ * Inline enrichment for top domains — runs DA, backlinks, RDAP lookups
+ * directly without needing Redis/BullMQ queue. Updates metrics in-place.
+ */
+async function inlineEnrichDomains(domainNames: string[]): Promise<void> {
+  for (const name of domainNames) {
+    try {
+      const dbDomain = await db.query.domainsTable.findFirst({
+        where: eq(domainsTable.name, name),
+      });
+      if (!dbDomain) continue;
+
+      // Run all enrichment in parallel
+      const [prResult, rdapResult, blResult] = await Promise.allSettled([
+        getPageRank([name]),
+        rdapLookup(name),
+        getBacklinks(name),
+      ]);
+
+      const da = prResult.status === "fulfilled" ? prResult.value.get(name)?.da : undefined;
+      const rdap = rdapResult.status === "fulfilled" ? rdapResult.value : null;
+      const bl = blResult.status === "fulfilled" ? blResult.value : null;
+
+      // Update domain status from RDAP (filter out registered/taken domains)
+      if (rdap && !rdap.available) {
+        // Domain is still registered — mark as TAKEN so it doesn't show as droppable
+        if (rdap.expiresDate) {
+          const daysLeft = (rdap.expiresDate.getTime() - Date.now()) / 86_400_000;
+          if (daysLeft > 30) {
+            // Still actively registered, remove from our listings
+            await db.update(domainsTable)
+              .set({ status: "TAKEN", updatedAt: new Date() })
+              .where(eq(domainsTable.id, dbDomain.id));
+          }
+        }
+      }
+
+      // Detect word type for NameBio valuation
+      const score = localPreScore(name);
+      const isSingleWord = score?.tier === "priority1";
+      const isFiveLetter = score?.tier === "five_letter";
+      const isWordPlusLetter = score?.tier === "priority2";
+      const isTwoWord = score?.tier === "priority3";
+
+      // Compute NameBio-calibrated value
+      const estimatedValue = computeNameBioValue(dbDomain.sld, dbDomain.tld, {
+        isSingleWord,
+        isFiveLetter,
+        isWordPlusLetter,
+        isTwoWord,
+        domainAuthority: da ?? null,
+        backlinks: bl?.totalLinks ?? null,
+      });
+
+      // Update metrics with real data
+      const existing = await db.query.metricsTable.findFirst({
+        where: eq(metricsTable.domainId, dbDomain.id),
+      });
+
+      if (existing) {
+        await db.update(metricsTable)
+          .set({
+            domainAuthority: da ?? existing.domainAuthority,
+            backlinks: bl?.totalLinks ?? existing.backlinks,
+            referringDomains: bl?.referringDomains ?? existing.referringDomains,
+            domainAge: rdap?.ageYears ?? existing.domainAge,
+            estimatedValue,
+            enrichedAt: new Date(),
+            updatedAt: new Date(),
+          })
+          .where(eq(metricsTable.domainId, dbDomain.id));
+      }
+    } catch (err) {
+      logger.warn({ domain: name, err }, "Inline enrichment failed for domain");
+    }
+
+    // Small delay to be polite to APIs
+    await new Promise((r) => setTimeout(r, 300));
+  }
 }
 
 router.post("/ingest", async (req, res) => {
@@ -351,37 +447,51 @@ router.post("/ingest", async (req, res) => {
 
       req.log.info({ rawCount: items.length }, "DropCatch domains pre-filtered (length ≤11, alpha-only, valuable TLDs)");
 
-      // Persist all pre-filtered domains to DB
-      const { count: inserted, newNames } = await persistFeedItems(items, "EXPIRED");
+      // ── STRICT FILTERING: Only persist qualifying domains (top 50%) ──────
+      // Run local pre-scoring to identify truly valuable candidates
+      const candidates = preScoreAndFilter(items, items.length); // score ALL items
+      req.log.info({ candidates: candidates.length, raw: items.length }, "Local pre-scoring complete");
 
-      // Run local pre-scoring to find top candidates for AI valuation
-      const candidates = preScoreAndFilter(items, 200);
-      req.log.info({ candidates: candidates.length }, "Local pre-scoring complete — sending to AI valuation");
+      // Only keep the top 50% of qualifying domains (those that scored 45+)
+      const maxToKeep = Math.ceil(candidates.length * 0.5);
+      const qualifyingCandidates = candidates.slice(0, maxToKeep);
+
+      // Only persist the qualifying domains (not every domain from the CSV)
+      const qualifyingItems = qualifyingCandidates.map((c) => ({
+        name: c.name,
+        source: "dropcatch",
+      } as DomainFeedItem));
+
+      req.log.info({ qualifying: qualifyingItems.length, total: items.length }, "Persisting only qualifying domains");
+      const { count: inserted, newNames } = await persistFeedItems(qualifyingItems, "EXPIRED");
 
       // AI valuation: select top 30 most valuable domains
       let top30 = null;
-      if (candidates.length > 0) {
+      const aiCandidates = qualifyingCandidates.slice(0, 200);
+      if (aiCandidates.length > 0) {
         try {
-          top30 = await aiValuateTop30(candidates);
+          top30 = await aiValuateTop30(aiCandidates);
           req.log.info({ top30Count: top30.length }, "AI valuation complete — top 30 selected");
         } catch (err) {
           req.log.error({ err }, "AI valuation failed — domains still ingested");
         }
       }
 
-      // Queue enrichment for the top candidates only (cost-efficient)
-      const enrichNames = top30
-        ? top30.map((d) => d.domain).filter((n) => newNames.includes(n))
-        : newNames.slice(0, 50);
-      await queueDomainEnrichment(enrichNames);
+      // Run inline enrichment for top picks (DA, backlinks, age)
+      const enrichTargets = top30
+        ? top30.map((d) => d.domain).filter((n) => newNames.includes(n)).slice(0, 30)
+        : newNames.slice(0, 20);
+      if (enrichTargets.length > 0) {
+        await inlineEnrichDomains(enrichTargets);
+      }
 
       return res.status(202).json({
-        message: `DropCatch: ${items.length} pre-filtered → ${inserted} new ingested → ${candidates.length} scored → ${top30?.length ?? 0} top picks`,
+        message: `DropCatch: ${items.length} raw → ${qualifyingItems.length} qualifying → ${inserted} new → ${top30?.length ?? 0} top picks`,
         ingested: inserted,
         preFiltered: items.length,
-        candidates: candidates.length,
+        candidates: qualifyingCandidates.length,
         top30: top30 ?? [],
-        queued: enrichNames.length,
+        enriched: enrichTargets.length,
       });
     }
 

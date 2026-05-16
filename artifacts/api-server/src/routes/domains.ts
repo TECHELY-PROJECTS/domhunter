@@ -294,8 +294,16 @@ router.get("/domains", async (req, res) => {
       countQuery.where(whereClause),
     ]);
 
+    // Deduplicate domains (in case of multiple metric rows per domain)
+    const seen = new Set<string>();
+    const uniqueDomains = domains.filter((d: any) => {
+      if (seen.has(d.id)) return false;
+      seen.add(d.id);
+      return true;
+    });
+
     res.json({
-      domains,
+      domains: uniqueDomains,
       total,
       page,
       limit,
