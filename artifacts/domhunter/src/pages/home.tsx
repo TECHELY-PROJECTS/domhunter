@@ -5,8 +5,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
-import { RefreshCw, Sparkles, Database, Trash2, Wand2 } from "lucide-react";
-import { useState } from "react";
+import { RefreshCw, Sparkles, Database, Trash2, Wand2, Upload } from "lucide-react";
+import { useState, useRef } from "react";
 
 export default function Home() {
   const { data: stats, isLoading: statsLoading, refetch: refetchStats } = useGetDomainStats();
@@ -20,10 +20,12 @@ export default function Home() {
   const [brandableLoading, setBrandableLoading] = useState(false);
   const [clearLoading, setClearLoading] = useState(false);
   const [backfillLoading, setBackfillLoading] = useState(false);
+  const [uploadLoading, setUploadLoading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const refetchAll = () => { refetchStats(); refetchRecent(); refetchTop(); refetchExpiring(); };
 
-  const anyLoading = syncLoading || sampleLoading || brandableLoading || clearLoading || backfillLoading;
+  const anyLoading = syncLoading || sampleLoading || brandableLoading || clearLoading || backfillLoading || uploadLoading;
 
   const handleIngest = async () => {
     setSyncLoading(true);
@@ -57,6 +59,52 @@ export default function Home() {
       toast({ title: "Sync Failed", description: "Network error — check server is running.", variant: "destructive" });
     } finally {
       setSyncLoading(false);
+    }
+  };
+
+  const handleCSVUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // Accept .csv and .txt files
+    if (!file.name.endsWith(".csv") && !file.name.endsWith(".txt")) {
+      toast({ title: "Invalid File", description: "Please upload a .csv or .txt file from DropCatch.", variant: "destructive" });
+      return;
+    }
+
+    setUploadLoading(true);
+    try {
+      const csvContent = await file.text();
+
+      if (csvContent.trim().length === 0) {
+        toast({ title: "Empty File", description: "The uploaded file is empty.", variant: "destructive" });
+        return;
+      }
+
+      const res = await fetch("/api/ingest", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ source: "dropcatch", csv: csvContent }),
+      });
+      const data = await res.json() as { message?: string; error?: string; top30?: unknown[]; ingested?: number };
+      if (!res.ok) {
+        toast({ title: "Upload Failed", description: data.error ?? "Unknown error", variant: "destructive" });
+      } else {
+        const top30Count = Array.isArray(data.top30) ? data.top30.length : 0;
+        toast({
+          title: "CSV Processed",
+          description: top30Count > 0
+            ? `${data.ingested ?? 0} domains ingested — ${top30Count} top picks identified!`
+            : data.message ?? "Domains processed.",
+        });
+        refetchAll();
+      }
+    } catch {
+      toast({ title: "Upload Failed", description: "Network error — check server is running.", variant: "destructive" });
+    } finally {
+      setUploadLoading(false);
+      // Reset file input so the same file can be re-uploaded
+      if (fileInputRef.current) fileInputRef.current.value = "";
     }
   };
 
@@ -177,6 +225,23 @@ export default function Home() {
             <RefreshCw className={`w-4 h-4 mr-2 ${syncLoading ? "animate-spin" : ""}`} />
             {syncLoading ? "Syncing..." : "Force Sync"}
           </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={anyLoading}
+            className="gap-2 border-cyan-500/40 text-cyan-400 hover:bg-cyan-500/10 hover:text-cyan-300"
+          >
+            <Upload className={`w-4 h-4 ${uploadLoading ? "animate-pulse" : ""}`} />
+            {uploadLoading ? "Processing..." : "Upload CSV"}
+          </Button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".csv,.txt"
+            onChange={handleCSVUpload}
+            className="hidden"
+          />
           <Button
             variant="outline"
             size="sm"

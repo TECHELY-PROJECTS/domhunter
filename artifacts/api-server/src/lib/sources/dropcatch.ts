@@ -9,7 +9,9 @@ import { logger } from "../logger";
  * We handle both cases — column-based CSV and plain domain-per-line.
  */
 
-const DROPCATCH_DOWNLOAD_URL = "https://www.dropcatch.com/downloads";
+// Direct CSV download URLs for DropCatch "Dropping Today/Tomorrow" lists
+const DROPCATCH_DROPPING_TODAY_URL = "https://www.dropcatch.com/Downloads/DroppingToday.csv";
+const DROPCATCH_DROPPING_TOMORROW_URL = "https://www.dropcatch.com/Downloads/DroppingTomorrow.csv";
 
 /**
  * Pre-filter rules (cheap, local, zero cost):
@@ -93,46 +95,55 @@ export function parseDropCatchCSV(csvContent: string): DomainFeedItem[] {
 }
 
 /**
- * Attempt to fetch the daily dropping CSV from DropCatch.
- * DropCatch provides a download link that doesn't require auth.
- * 
- * If the direct download fails, returns null so the caller can fall back
- * to manual upload.
+ * Fetch the daily "Dropping Today" CSV directly from DropCatch.
+ * This is a publicly accessible direct CSV download (no account needed).
+ * Falls back to "Dropping Tomorrow" if today's file isn't available yet.
  */
 export async function fetchDropCatchCSV(): Promise<DomainFeedItem[] | null> {
-  try {
-    logger.info("Fetching DropCatch daily dropping domains CSV...");
+  const urls = [DROPCATCH_DROPPING_TODAY_URL, DROPCATCH_DROPPING_TOMORROW_URL];
 
-    // DropCatch download page — try to fetch CSV directly
-    const res = await fetch(DROPCATCH_DOWNLOAD_URL, {
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
-        Accept: "text/csv,text/plain,application/octet-stream,*/*",
-      },
-      signal: AbortSignal.timeout(30_000),
-    });
+  for (const url of urls) {
+    try {
+      logger.info({ url }, "Fetching DropCatch dropping domains CSV...");
 
-    if (!res.ok) {
-      logger.warn({ status: res.status }, "DropCatch CSV download returned non-200");
-      return null;
+      const res = await fetch(url, {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/122.0.0.0",
+          Accept: "text/csv,text/plain,application/octet-stream,*/*",
+        },
+        signal: AbortSignal.timeout(30_000),
+      });
+
+      if (!res.ok) {
+        logger.warn({ url, status: res.status }, "DropCatch CSV download returned non-200 — trying next");
+        continue;
+      }
+
+      const contentType = res.headers.get("content-type") ?? "";
+      const body = await res.text();
+
+      // If we got HTML instead of CSV, try the next URL
+      if (contentType.includes("text/html") && body.includes("<html")) {
+        logger.warn({ url }, "DropCatch returned HTML instead of CSV — trying next");
+        continue;
+      }
+
+      // Sanity check: CSV should have at least some domain-like content
+      if (body.length < 50 || (!body.includes(".com") && !body.includes(".net") && !body.includes(".org"))) {
+        logger.warn({ url, bodyLen: body.length }, "DropCatch response doesn't look like domain CSV — trying next");
+        continue;
+      }
+
+      const items = parseDropCatchCSV(body);
+      logger.info({ url, rawLines: body.split("\n").length, filtered: items.length }, "DropCatch CSV parsed and pre-filtered");
+      return items;
+    } catch (err) {
+      logger.error({ url, err }, "Failed to fetch DropCatch CSV — trying next");
     }
-
-    const contentType = res.headers.get("content-type") ?? "";
-    const body = await res.text();
-
-    // If we got HTML instead of CSV, the page might need interaction
-    if (contentType.includes("text/html") && body.includes("<html")) {
-      logger.warn("DropCatch returned HTML — CSV may require manual download");
-      return null;
-    }
-
-    const items = parseDropCatchCSV(body);
-    logger.info({ total: items.length }, "DropCatch CSV parsed and pre-filtered");
-    return items;
-  } catch (err) {
-    logger.error({ err }, "Failed to fetch DropCatch CSV");
-    return null;
   }
+
+  logger.warn("All DropCatch CSV URLs failed — manual upload required");
+  return null;
 }
 
 /**
