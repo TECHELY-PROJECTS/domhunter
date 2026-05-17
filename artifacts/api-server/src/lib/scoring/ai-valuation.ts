@@ -18,24 +18,57 @@ import { logger } from "../logger";
 // LOCAL PRE-SCORING (Zero Cost)
 // ═══════════════════════════════════════════════════════════════════════════
 
-/** Common English words that make strong single-keyword domains */
+/** 
+ * REAL English words that make strong single-keyword domains.
+ * This is the ONLY way a domain qualifies as Priority 1.
+ * Random letter combos like "gseibap" or "fospes" will NEVER match.
+ */
 const POWER_WORDS = new Set([
-  // Tech
+  // Tech / SaaS
   "cloud", "stack", "forge", "nexus", "pulse", "spark", "swift", "logic",
   "pixel", "cyber", "agent", "delta", "flux", "surge", "orbit", "prism",
   "blade", "vault", "apex", "nova", "edge", "sync", "grid", "core",
-  // Finance
-  "yield", "prime", "alpha", "vault", "fund", "mint", "peak", "equity",
-  "trade", "block", "stake", "trust", "ledger",
-  // Brand/Lifestyle
+  "dash", "wire", "link", "byte", "data", "code", "chip", "node",
+  "meta", "mesh", "bolt", "beam", "wave", "loop", "path", "zone",
+  "nest", "dock", "port", "gate", "base", "hive", "rack", "pipe",
+  // Finance / Business
+  "yield", "prime", "alpha", "fund", "mint", "peak", "equity",
+  "trade", "block", "stake", "trust", "ledger", "cash", "coin",
+  "bank", "gold", "rich", "earn", "gain", "debt", "bond", "save",
+  "loan", "rate", "rise", "bull", "bear", "market",
+  // Brand / Lifestyle
   "luxe", "haven", "bloom", "vivid", "urban", "bold", "crisp", "sleek",
   "zen", "glow", "lush", "pure", "fresh", "bright", "noble", "royal",
-  // Health/Wellness
-  "vital", "thrive", "vigor", "calm", "renew", "heal", "bloom",
-  // E-commerce
-  "cargo", "haul", "scout", "fetch", "craft", "guild",
-  // Media/Creative
+  "elite", "ultra", "vibe", "mood", "style", "trend", "chic",
+  // Health / Wellness
+  "vital", "thrive", "vigor", "calm", "renew", "heal", "glow",
+  "life", "body", "mind", "soul", "skin", "diet", "lean", "fit",
+  // E-commerce / Products
+  "cargo", "haul", "scout", "fetch", "craft", "guild", "shop",
+  "mart", "deal", "cart", "ship", "pack", "send", "drop", "grab",
+  // Media / Creative
   "muse", "opus", "reel", "cast", "verse", "tune", "vibe",
+  "film", "clip", "snap", "shot", "play", "song", "beat", "tone",
+  // Real Estate / Space
+  "home", "land", "roof", "nest", "loft", "plot", "acre", "lawn",
+  // Food / Hospitality
+  "bite", "meal", "dish", "chef", "brew", "bake", "wine", "dine",
+  // Nature / Environment
+  "leaf", "tree", "rain", "snow", "sun", "moon", "star", "wind",
+  "lake", "rock", "sand", "clay", "seed", "root", "vine",
+  // Action / Power words
+  "rise", "grow", "move", "push", "pull", "lift", "jump", "leap",
+  "rush", "race", "dash", "hunt", "seek", "find", "reach", "gain",
+  "build", "make", "form", "plan", "test", "scan", "track",
+  // General high-value English words (3-7 letters)
+  "able", "arch", "aura", "axis", "calm", "cape", "cure", "dawn",
+  "dome", "dune", "echo", "fern", "fire", "flair", "flame", "flow",
+  "gale", "gem", "halo", "hawk", "helm", "jade", "keen", "kite",
+  "lance", "lark", "mist", "myth", "neon", "opal", "orb", "owl",
+  "palm", "pier", "pine", "quill", "realm", "sage", "sail", "silk",
+  "slate", "sonic", "spire", "steel", "stone", "storm", "swift",
+  "thorn", "tide", "torch", "trail", "tribe", "valor", "velvet",
+  "vigor", "vivid", "wren", "zenith",
 ]);
 
 /** Common vowel patterns that make words pronounceable */
@@ -63,37 +96,61 @@ function isPronouunceable(sld: string): boolean {
   return hasVowel && consonantStreak <= 3;
 }
 
-/** Detect if SLD is a single real English word (heuristic) */
-function isSingleWord(sld: string): boolean {
-  // Known power words
-  if (POWER_WORDS.has(sld)) return true;
-  // 3-6 letter pronounceable words are likely single words
-  if (sld.length >= 3 && sld.length <= 7 && isPronouunceable(sld)) return true;
-  return false;
+/**
+ * Strict structure check for short domains (4-5 letters).
+ * Rejects random combos like "gjihk", "gdetj", "xximm" while allowing
+ * brandable patterns like "nova", "vibe", "luxe", "bento", "pluto".
+ * 
+ * Rules:
+ * - Must have at least 40% vowels (real words do)
+ * - Must not start with uncommon consonant clusters (gj, gv, xxi, sb, gd, etc.)
+ * - Must not have 3+ consonants in a row at the start
+ */
+function hasGoodStructure(sld: string): boolean {
+  // Vowel ratio check: real words have ~40%+ vowels
+  const vowelCount = [...sld].filter(c => VOWELS.has(c)).length;
+  if (vowelCount / sld.length < 0.35) return false;
+
+  // Reject ugly starting consonant clusters (common in gibberish, rare in English)
+  const badStarts = /^(gj|gv|gd|gs|bv|xxi|sb|gk|zx|vk|bk|dk|fk|gn|kn|pf|sv|tv|zv|zt)/;
+  if (badStarts.test(sld)) return false;
+
+  // Reject if starts with 3 consonants
+  const firstThree = sld.slice(0, 3);
+  const consonantsAtStart = [...firstThree].filter(c => !VOWELS.has(c)).length;
+  if (consonantsAtStart === 3) return false;
+
+  // Must start with a common English beginning
+  const goodStarts = /^[a-z][aeiou]|^[bcdfghjklmnprstvwyz][aeioulr]/;
+  if (!goodStarts.test(sld)) return false;
+
+  return true;
 }
 
-/** Detect word+letter pattern (e.g., "foodx", "techy") */
+/** Detect if SLD is a single real English word — STRICT: must be in POWER_WORDS */
+function isSingleWord(sld: string): boolean {
+  return POWER_WORDS.has(sld);
+}
+
+/** Detect word+letter pattern (e.g., "foodx", "techy") — base word MUST be in POWER_WORDS */
 function isWordPlusLetter(sld: string): boolean {
   if (sld.length < 4 || sld.length > 9) return false;
-  // Check if removing last 1-2 chars gives a known word
+  // Check if removing last 1-2 chars gives a KNOWN word
   const minus1 = sld.slice(0, -1);
   const minus2 = sld.slice(0, -2);
-  if (POWER_WORDS.has(minus1) || (minus1.length >= 4 && isPronouunceable(minus1))) return true;
-  if (minus2.length >= 4 && (POWER_WORDS.has(minus2) || isPronouunceable(minus2))) return true;
+  if (POWER_WORDS.has(minus1)) return true;
+  if (minus2.length >= 3 && POWER_WORDS.has(minus2)) return true;
   return false;
 }
 
-/** Detect two-word compound (e.g., "mintleaf", "cloudmesh") */
+/** Detect two-word compound (e.g., "mintleaf", "cloudmesh") — BOTH parts must be in POWER_WORDS */
 function isTwoWordCompound(sld: string): boolean {
   if (sld.length < 6) return false;
-  // Try splitting at every position
+  // Try splitting at every position — both halves must be known words
   for (let i = 3; i <= sld.length - 3; i++) {
     const left = sld.slice(0, i);
     const right = sld.slice(i);
-    if (
-      (POWER_WORDS.has(left) || (left.length >= 3 && isPronouunceable(left))) &&
-      (POWER_WORDS.has(right) || (right.length >= 3 && isPronouunceable(right)))
-    ) {
+    if (POWER_WORDS.has(left) && POWER_WORDS.has(right)) {
       return true;
     }
   }
@@ -135,27 +192,29 @@ export function localPreScore(domain: string): LocalPreScore | null {
     tier = "priority1";
     baseScore = 85;
   }
-  // Priority 3: two-word compound (e.g., "initjob", "cloudmesh") — valued higher than random letters
+  // Priority 3: two-word compound (e.g., "initjob", "cloudmesh") — both parts must be real words
   else if (isTwoWordCompound(sld)) {
     tier = "priority3";
     baseScore = 65;
   }
-  // Priority 2: word + letter(s) (e.g., "foodx", "stacky")
+  // Priority 2: word + letter(s) (e.g., "foodx", "stacky") — base must be a real word
   else if (isWordPlusLetter(sld)) {
     tier = "priority2";
     baseScore = 55;
   }
-  // Special: exactly 5 letters and pronounceable
-  else if (sld.length === 5 && pronounceable) {
+  // Special: exactly 4 letters .com and pronounceable (premium short .com)
+  else if (sld.length === 4 && tld === "com" && pronounceable) {
     tier = "five_letter";
     baseScore = 60;
   }
-  // Unclassified but still pronounceable — might be a brandable invented word
-  else if (pronounceable && sld.length <= 7) {
-    tier = "unclassified";
-    baseScore = 40;
-  } else {
-    return null; // Doesn't fit any valuable tier
+  // Special: exactly 5 letters and pronounceable (only if it looks like a real word)
+  else if (sld.length === 5 && pronounceable && hasGoodStructure(sld)) {
+    tier = "five_letter";
+    baseScore = 50;
+  }
+  else {
+    // REJECT: random gibberish like "gseibap", "fospes", "gjihk" etc.
+    return null;
   }
 
   // TLD bonus (com is king)
