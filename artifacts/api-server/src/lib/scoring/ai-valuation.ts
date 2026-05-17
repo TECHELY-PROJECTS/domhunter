@@ -130,39 +130,39 @@ export function localPreScore(domain: string): LocalPreScore | null {
   let tier: PriorityTier = "unclassified";
   let baseScore = 30;
 
-  // Priority 1: Pure single keyword
+  // Priority 1: Pure single keyword (HIGHEST — real English words with market demand)
   if (isSingleWord(sld)) {
     tier = "priority1";
-    baseScore = 80;
+    baseScore = 85;
   }
-  // Special: exactly 5 letters
-  else if (sld.length === 5 && pronounceable) {
-    tier = "five_letter";
-    baseScore = 70;
-  }
-  // Priority 2: word + letter(s)
-  else if (isWordPlusLetter(sld)) {
-    tier = "priority2";
-    baseScore = 60;
-  }
-  // Priority 3: two-word compound
+  // Priority 3: two-word compound (e.g., "initjob", "cloudmesh") — valued higher than random letters
   else if (isTwoWordCompound(sld)) {
     tier = "priority3";
+    baseScore = 65;
+  }
+  // Priority 2: word + letter(s) (e.g., "foodx", "stacky")
+  else if (isWordPlusLetter(sld)) {
+    tier = "priority2";
     baseScore = 55;
+  }
+  // Special: exactly 5 letters and pronounceable
+  else if (sld.length === 5 && pronounceable) {
+    tier = "five_letter";
+    baseScore = 60;
   }
   // Unclassified but still pronounceable — might be a brandable invented word
   else if (pronounceable && sld.length <= 7) {
     tier = "unclassified";
-    baseScore = 45;
+    baseScore = 40;
   } else {
     return null; // Doesn't fit any valuable tier
   }
 
-  // TLD bonus
-  const tldBonus = tld === "com" ? 10 : tld === "io" ? 7 : tld === "ai" ? 8 : tld === "co" ? 5 : 3;
+  // TLD bonus (com is king)
+  const tldBonus = tld === "com" ? 12 : tld === "io" ? 7 : tld === "ai" ? 8 : tld === "co" ? 5 : 3;
 
-  // Length bonus (shorter = better)
-  const lengthBonus = sld.length <= 4 ? 10 : sld.length <= 5 ? 7 : sld.length <= 7 ? 4 : 0;
+  // Length bonus (4-letter .com = highest possible score)
+  const lengthBonus = sld.length === 4 && tld === "com" ? 15 : sld.length <= 4 ? 10 : sld.length <= 5 ? 7 : sld.length <= 7 ? 4 : 0;
 
   const localScore = Math.min(100, baseScore + tldBonus + lengthBonus);
 
@@ -179,36 +179,70 @@ export function localPreScore(domain: string): LocalPreScore | null {
 
 /**
  * Pre-score and filter a large list of domains locally (zero cost).
- * Returns the top N candidates sorted by local score for AI valuation.
+ * 
+ * PRIORITY ORDER (as per user requirement):
+ * 1. 4-letter .com domains (highest value — always first)
+ * 2. Keyword/trend-based single-word domains (real English words)
+ * 3. Word + 1-2 random letters (top 200 max)
+ * 4. Compound words (two keywords joined, e.g., "initjob")
+ * 
+ * Returns the top N candidates sorted by this strict priority.
  */
 export function preScoreAndFilter(
   domains: Array<{ name: string }>,
-  maxCandidates = 200,
+  maxCandidates = 1000,
 ): LocalPreScore[] {
-  const scored: LocalPreScore[] = [];
+  // Bucket domains by priority tier
+  const fourLetterCom: LocalPreScore[] = [];
+  const keywordSingle: LocalPreScore[] = [];
+  const wordPlusLetter: LocalPreScore[] = [];
+  const compoundWords: LocalPreScore[] = [];
+  const fiveLetterSpecial: LocalPreScore[] = [];
 
   for (const d of domains) {
     const result = localPreScore(d.name);
-    if (result && result.localScore >= 40) {
-      scored.push(result);
+    if (!result || result.localScore < 40) continue;
+
+    // Tier 1: 4-letter .com (absolute highest priority)
+    if (result.sld.length === 4 && result.tld === "com") {
+      fourLetterCom.push(result);
+    }
+    // Tier 2: Single keyword domains (real English words)
+    else if (result.tier === "priority1") {
+      keywordSingle.push(result);
+    }
+    // Tier 3: Word + 1-2 letters
+    else if (result.tier === "priority2") {
+      wordPlusLetter.push(result);
+    }
+    // Tier 4: Compound words (two keywords joined)
+    else if (result.tier === "priority3") {
+      compoundWords.push(result);
+    }
+    // 5-letter special
+    else if (result.tier === "five_letter") {
+      fiveLetterSpecial.push(result);
     }
   }
 
-  // Sort by score descending, then by tier priority
-  const tierOrder: Record<PriorityTier, number> = {
-    priority1: 0,
-    five_letter: 1,
-    priority2: 2,
-    priority3: 3,
-    unclassified: 4,
-  };
+  // Sort each bucket by score descending
+  const sortByScore = (a: LocalPreScore, b: LocalPreScore) => b.localScore - a.localScore;
+  fourLetterCom.sort(sortByScore);
+  keywordSingle.sort(sortByScore);
+  fiveLetterSpecial.sort(sortByScore);
+  wordPlusLetter.sort(sortByScore);
+  compoundWords.sort(sortByScore);
 
-  scored.sort((a, b) => {
-    if (b.localScore !== a.localScore) return b.localScore - a.localScore;
-    return tierOrder[a.tier] - tierOrder[b.tier];
-  });
+  // Assemble final list in strict priority order
+  const result: LocalPreScore[] = [
+    ...fourLetterCom,                         // ALL 4-letter .com (highest priority)
+    ...keywordSingle,                         // ALL keyword/trend single-word domains
+    ...fiveLetterSpecial,                     // ALL 5-letter pronounceable
+    ...wordPlusLetter.slice(0, 200),          // Top 200 word+letter domains only
+    ...compoundWords.slice(0, 300),           // Top 300 compound words
+  ];
 
-  return scored.slice(0, maxCandidates);
+  return result.slice(0, maxCandidates);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

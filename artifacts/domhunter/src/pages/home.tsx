@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { RefreshCw, Sparkles, Database, Trash2, Wand2, Upload } from "lucide-react";
 import { useState, useRef } from "react";
+import { DomainSearch } from "@/components/domain-search";
 
 export default function Home() {
   const { data: stats, isLoading: statsLoading, refetch: refetchStats } = useGetDomainStats();
@@ -203,7 +204,9 @@ export default function Home() {
           <h1 className="text-3xl font-bold tracking-tight">Terminal</h1>
           <p className="text-muted-foreground mt-1">Live market overview and opportunities.</p>
         </div>
-        <div className="flex gap-2 flex-wrap">
+        <DomainSearch />
+      </div>
+      <div className="flex gap-2 flex-wrap">
           <Button
             variant="outline"
             size="sm"
@@ -266,7 +269,6 @@ export default function Home() {
             {clearLoading ? "Deleting..." : "Clear All"}
           </Button>
         </div>
-      </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <StatCard title="Total Domains" value={stats?.totalDomains} loading={statsLoading} />

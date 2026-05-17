@@ -16,6 +16,43 @@ import {
 
 const router: IRouter = Router();
 
+/**
+ * GET /api/domains/search?q=keyword
+ * Real-time search - returns matching domains instantly as user types
+ */
+router.get("/domains/search", async (req, res) => {
+  try {
+    const q = ((req.query as Record<string, string>).q ?? "").trim().toLowerCase();
+    if (!q || q.length < 2) {
+      return res.json({ results: [] });
+    }
+
+    const results = await db
+      .selectDistinctOn([domainsTable.id], {
+        id: domainsTable.id,
+        name: domainsTable.name,
+        sld: domainsTable.sld,
+        tld: domainsTable.tld,
+        status: domainsTable.status,
+        rarityScore: metricsTable.rarityScore,
+        brandScore: metricsTable.brandScore,
+        estimatedValue: metricsTable.estimatedValue,
+        recommendation: metricsTable.recommendation,
+        rarityTier: metricsTable.rarityTier,
+      })
+      .from(domainsTable)
+      .leftJoin(metricsTable, eq(domainsTable.id, metricsTable.domainId))
+      .where(ilike(domainsTable.name, `%${q}%`))
+      .orderBy(domainsTable.id, desc(metricsTable.rarityScore))
+      .limit(15);
+
+    res.json({ results });
+  } catch (err) {
+    req.log.error({ err }, "Search failed");
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 router.get("/domains/stats", async (req, res) => {
   try {
     const [totalResult] = await db
@@ -263,8 +300,9 @@ router.get("/domains", async (req, res) => {
 
     const whereClause = and(...conditions);
 
+    // Use raw SQL with DISTINCT ON to prevent duplicates from leftJoin
     const baseQuery = db
-      .select({
+      .selectDistinctOn([domainsTable.id], {
         id: domainsTable.id,
         name: domainsTable.name,
         sld: domainsTable.sld,
@@ -284,26 +322,18 @@ router.get("/domains", async (req, res) => {
       .$dynamic();
 
     const countQuery = db
-      .select({ total: sql<number>`count(*)::int` })
+      .select({ total: sql<number>`count(DISTINCT ${domainsTable.id})::int` })
       .from(domainsTable)
       .leftJoin(metricsTable, eq(domainsTable.id, metricsTable.domainId))
       .$dynamic();
 
     const [domains, [{ total }]] = await Promise.all([
-      baseQuery.where(whereClause).orderBy(orderFn(sortCol as Parameters<typeof desc>[0])).limit(limit).offset(offset),
+      baseQuery.where(whereClause).orderBy(domainsTable.id, orderFn(sortCol as Parameters<typeof desc>[0])).limit(limit).offset(offset),
       countQuery.where(whereClause),
     ]);
 
-    // Deduplicate domains (in case of multiple metric rows per domain)
-    const seen = new Set<string>();
-    const uniqueDomains = domains.filter((d: any) => {
-      if (seen.has(d.id)) return false;
-      seen.add(d.id);
-      return true;
-    });
-
     res.json({
-      domains: uniqueDomains,
+      domains,
       total,
       page,
       limit,
@@ -322,18 +352,27 @@ router.get("/domains", async (req, res) => {
 router.delete("/domains", async (req, res) => {
   try {
     const { source } = req.body as { source?: string };
+
+    // Get all bookmarked/watchlisted domain IDs — these are NEVER deleted
+    const watchedRows = await db.select({ domainId: watchlistTable.domainId }).from(watchlistTable);
+    const protectedIds = new Set(watchedRows.map((r) => r.domainId));
+
     if (source) {
       const rows = await db.select({ id: domainsTable.id }).from(domainsTable).where(eq(domainsTable.source, source));
       if (rows.length === 0) return res.json({ deleted: 0, source });
-      const ids = rows.map((r) => r.id);
+      const ids = rows.map((r) => r.id).filter((id) => !protectedIds.has(id));
+      if (ids.length === 0) return res.json({ deleted: 0, source, protected: rows.length });
       await db.delete(domainsTable).where(inArray(domainsTable.id, ids));
-      req.log.info({ source, deleted: ids.length }, "Domains deleted by source");
-      return res.json({ deleted: ids.length, source });
+      req.log.info({ source, deleted: ids.length, protected: rows.length - ids.length }, "Domains deleted by source (bookmarks preserved)");
+      return res.json({ deleted: ids.length, source, protected: rows.length - ids.length });
     }
-    const [{ count }] = await db.select({ count: sql<number>`count(*)::int` }).from(domainsTable);
-    await db.delete(domainsTable);
-    req.log.info({ deleted: count }, "All domains deleted");
-    return res.json({ deleted: count });
+    const allRows = await db.select({ id: domainsTable.id }).from(domainsTable);
+    const idsToDelete = allRows.map((r) => r.id).filter((id) => !protectedIds.has(id));
+    if (idsToDelete.length > 0) {
+      await db.delete(domainsTable).where(inArray(domainsTable.id, idsToDelete));
+    }
+    req.log.info({ deleted: idsToDelete.length, protected: protectedIds.size }, "Domains deleted (bookmarks preserved)");
+    return res.json({ deleted: idsToDelete.length, protected: protectedIds.size });
   } catch (err) {
     req.log.error({ err }, "Failed to delete domains");
     res.status(500).json({ error: "Internal server error" });
