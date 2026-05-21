@@ -465,12 +465,61 @@ router.post("/ingest", async (req, res) => {
 
       req.log.info({ rawCount: items.length }, "Combined domains from all sources (deduplicated)");
 
-      // ── STRICT FILTERING: Pre-score and keep only the best candidates ──────
+      // ── FILTERING: Pre-score and keep the best candidates ──────
       const candidates = preScoreAndFilter(items, items.length); // score ALL items
       req.log.info({ candidates: candidates.length, raw: items.length }, "Local pre-scoring complete");
 
-      // Only keep the top 2000 qualifying domains (best of the best)
-      const qualifyingCandidates = candidates.slice(0, 2000);
+      // If strict scoring yields fewer than 100 results, use relaxed filtering
+      // to guarantee we always show meaningful data to the user
+      let qualifyingCandidates = candidates.slice(0, 2000);
+
+      if (qualifyingCandidates.length < 100 && items.length > 0) {
+        req.log.info({ strict: qualifyingCandidates.length }, "Strict filter too aggressive — using relaxed filter to reach 100+ domains");
+
+        // Relaxed filter: keep any domain that is short, alpha-only, with a valuable TLD
+        const VALUABLE_TLDS = new Set(["com", "io", "ai", "co", "net", "org", "app", "dev", "xyz"]);
+        const alreadyQualified = new Set(qualifyingCandidates.map((c) => c.name));
+
+        const relaxedItems: typeof qualifyingCandidates = [];
+        for (const item of items) {
+          if (alreadyQualified.has(item.name)) continue;
+          const parts = item.name.toLowerCase().split(".");
+          if (parts.length < 2) continue;
+          const tld = parts[parts.length - 1];
+          const sld = parts.slice(0, parts.length - 1).join("");
+
+          // Basic quality filters (much less strict)
+          if (sld.length < 3 || sld.length > 14) continue;
+          if (!/^[a-z]+$/.test(sld)) continue;
+          if (!VALUABLE_TLDS.has(tld)) continue;
+
+          // Give it a basic score based on length and TLD
+          const tldBonus = tld === "com" ? 12 : tld === "ai" ? 10 : tld === "io" ? 8 : tld === "co" ? 6 : 4;
+          const lengthBonus = sld.length <= 4 ? 15 : sld.length <= 6 ? 10 : sld.length <= 8 ? 5 : 0;
+          const baseScore = 35 + tldBonus + lengthBonus;
+
+          relaxedItems.push({
+            name: item.name,
+            sld,
+            tld,
+            tier: "unclassified" as const,
+            localScore: Math.min(100, baseScore),
+            pronounceable: true,
+            charCount: sld.length,
+          });
+        }
+
+        // Sort relaxed items by score and length (shorter = better)
+        relaxedItems.sort((a, b) => b.localScore - a.localScore || a.charCount - b.charCount);
+
+        // Merge: strict results first, then fill with relaxed to reach at least 100
+        const needed = Math.max(0, 100 - qualifyingCandidates.length);
+        qualifyingCandidates = [
+          ...qualifyingCandidates,
+          ...relaxedItems.slice(0, Math.max(needed, 200)),
+        ];
+        req.log.info({ final: qualifyingCandidates.length, relaxedAdded: relaxedItems.slice(0, Math.max(needed, 200)).length }, "Relaxed filter applied");
+      }
 
       // Only persist the qualifying domains (not every raw domain)
       const qualifyingItems = qualifyingCandidates.map((c) => ({

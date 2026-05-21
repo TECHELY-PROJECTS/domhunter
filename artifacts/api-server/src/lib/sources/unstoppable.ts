@@ -11,7 +11,7 @@ import { logger } from "../logger";
  */
 
 const UD_API_URL = "https://api.unstoppabledomains.com/mcp/v1/actions/ud_expireds_list";
-const VALUABLE_TLDS = ["com", "net", "io", "co", "ai", "org", "app", "dev"];
+const VALUABLE_TLDS = ["com", "net", "io", "co", "ai", "org", "app", "dev", "xyz", "me", "cc", "info"];
 const MAX_PAGES = 20; // Max 20 pages × 500 = 10,000 domains max
 
 interface UDDomain {
@@ -71,24 +71,41 @@ export async function fetchUnstoppableDomains(): Promise<DomainFeedItem[] | null
       });
 
       if (!res.ok) {
-        const errText = await res.text().then((t) => t.slice(0, 200));
+        const errText = await res.text().then((t) => t.slice(0, 500));
         logger.error({ status: res.status, err: errText }, "Unstoppable Domains API error");
         if (allDomains.length > 0) break; // Return what we have
         return null;
       }
 
-      const data = (await res.json()) as UDResponse;
-
-      for (const d of data.domains) {
-        if (!d.name || !d.name.includes(".")) continue;
-        allDomains.push({
-          name: d.name.toLowerCase(),
-          source: "unstoppable",
-        });
+      let data: UDResponse;
+      try {
+        const raw = await res.json();
+        // Handle potential wrapper formats
+        data = raw.data ?? raw.result ?? raw;
+        if (!data.domains) data = { domains: [], pagination: { count: 0, offset: 0, limit: 500, hasMore: false } };
+        if (!Array.isArray(data.domains)) {
+          logger.warn({ raw: JSON.stringify(raw).slice(0, 300) }, "Unexpected UD API response format");
+          break;
+        }
+      } catch (parseErr) {
+        logger.error({ parseErr }, "Failed to parse UD API response");
+        break;
       }
 
-      hasMore = data.pagination.hasMore;
-      offset = data.pagination.nextOffset ?? offset + 500;
+      for (const d of data.domains) {
+        if (!d.name) continue;
+        const name = d.name.toLowerCase().trim();
+        // Accept domains with dots (traditional format)
+        if (name.includes(".")) {
+          allDomains.push({
+            name,
+            source: "unstoppable",
+          });
+        }
+      }
+
+      hasMore = data.pagination?.hasMore ?? false;
+      offset = data.pagination?.nextOffset ?? offset + 500;
       pageCount++;
 
       // Small delay between pages
