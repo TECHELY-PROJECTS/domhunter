@@ -2,45 +2,37 @@ import type { DomainFeedItem } from "./types";
 import { logger } from "../logger";
 
 /**
- * Unstoppable Domains Pending-Delete API
+ * Unstoppable Domains — Expiring Traditional Domains API
  * 
- * Fetches domains approaching expiration from the UD marketplace.
- * Requires UNSTOPPABLE_API_KEY env var (free from unstoppabledomains.com).
+ * Uses the ud_expireds_list endpoint to fetch traditional domains (com/net/io/etc)
+ * that are expiring/pending-delete. These are real ICANN domains that can be
+ * backordered or hand-registered once they drop.
+ * 
+ * Requires UNSTOPPABLE_API_KEY env var.
+ * 
+ * Workflow per API provider:
+ *   1. Search expiring domains via ud_expireds_list
+ *   2. Optionally create backorders via ud_backorder_create
  * 
  * API: POST https://api.unstoppabledomains.com/mcp/v1/actions/ud_expireds_list
  */
 
 const UD_API_URL = "https://api.unstoppabledomains.com/mcp/v1/actions/ud_expireds_list";
-const VALUABLE_TLDS = ["com", "net", "io", "co", "ai", "org", "app", "dev", "xyz", "me", "cc", "info"];
-const MAX_PAGES = 20; // Max 20 pages × 500 = 10,000 domains max
 
-interface UDDomain {
-  name: string;
-  deletionDate?: string;
-  status?: string;
-  labelLength?: number;
-}
-
-interface UDResponse {
-  domains: UDDomain[];
-  pagination: {
-    count: number;
-    offset: number;
-    limit: number;
-    hasMore: boolean;
-    nextOffset?: number;
-  };
-}
+// Only traditional ICANN TLDs — these are the valuable ones for domain investing
+const TRADITIONAL_TLDS = ["com", "net", "org", "io", "co", "ai", "app", "dev", "xyz", "me", "info", "cc", "biz"];
+const MAX_PAGES = 20;
+const PAGE_SIZE = 500;
 
 /**
- * Fetch all pending-delete domains from Unstoppable Domains API.
- * Paginates through all results automatically.
- * Returns raw domain items for filtering by the scoring pipeline.
+ * Fetch expiring traditional domains from Unstoppable Domains API.
+ * Paginates through results to get a large pool of domains for scoring.
+ * Only returns traditional TLD domains (com, net, io, etc).
  */
 export async function fetchUnstoppableDomains(): Promise<DomainFeedItem[] | null> {
   const apiKey = process.env.UNSTOPPABLE_API_KEY;
   if (!apiKey) {
-    logger.warn("UNSTOPPABLE_API_KEY not set — cannot fetch pending-delete domains");
+    logger.warn("UNSTOPPABLE_API_KEY not set — cannot fetch expiring domains");
     return null;
   }
 
@@ -49,10 +41,20 @@ export async function fetchUnstoppableDomains(): Promise<DomainFeedItem[] | null
   let hasMore = true;
   let pageCount = 0;
 
-  logger.info("Fetching pending-delete domains from Unstoppable Domains...");
+  logger.info({ tlds: TRADITIONAL_TLDS }, "Fetching expiring traditional domains from Unstoppable Domains API...");
 
   while (hasMore && pageCount < MAX_PAGES) {
     try {
+      const requestBody = {
+        tlds: TRADITIONAL_TLDS,
+        sortBy: "deletionAt",
+        sortDirection: "ASC",
+        limit: PAGE_SIZE,
+        offset,
+      };
+
+      logger.debug({ offset, page: pageCount }, "Fetching UD expireds page");
+
       const res = await fetch(UD_API_URL, {
         method: "POST",
         headers: {
@@ -60,57 +62,79 @@ export async function fetchUnstoppableDomains(): Promise<DomainFeedItem[] | null
           Accept: "application/json",
           Authorization: `Bearer ${apiKey}`,
         },
-        body: JSON.stringify({
-          tlds: VALUABLE_TLDS,
-          sortBy: "deletionAt",
-          sortDirection: "ASC",
-          limit: 500,
-          offset,
-        }),
+        body: JSON.stringify(requestBody),
         signal: AbortSignal.timeout(30_000),
       });
 
       if (!res.ok) {
         const errText = await res.text().then((t) => t.slice(0, 500));
-        logger.error({ status: res.status, err: errText }, "Unstoppable Domains API error");
-        if (allDomains.length > 0) break; // Return what we have
+        logger.error({ status: res.status, body: errText, offset }, "Unstoppable Domains API error");
+        // If we already have some domains, return them; otherwise fail
+        if (allDomains.length > 0) break;
         return null;
       }
 
-      let data: UDResponse;
+      let raw: any;
       try {
-        const raw = await res.json();
-        // Handle potential wrapper formats
-        data = raw.data ?? raw.result ?? raw;
-        if (!data.domains) data = { domains: [], pagination: { count: 0, offset: 0, limit: 500, hasMore: false } };
-        if (!Array.isArray(data.domains)) {
-          logger.warn({ raw: JSON.stringify(raw).slice(0, 300) }, "Unexpected UD API response format");
-          break;
-        }
+        raw = await res.json();
       } catch (parseErr) {
-        logger.error({ parseErr }, "Failed to parse UD API response");
+        logger.error({ parseErr, offset }, "Failed to parse UD API JSON response");
         break;
       }
 
-      for (const d of data.domains) {
-        if (!d.name) continue;
-        const name = d.name.toLowerCase().trim();
-        // Accept domains with dots (traditional format)
-        if (name.includes(".")) {
-          allDomains.push({
-            name,
-            source: "unstoppable",
-          });
+      // The API might wrap the response — handle various formats
+      const responseData = raw?.data ?? raw?.result ?? raw;
+      const domains: any[] = responseData?.domains ?? responseData?.items ?? responseData?.results ?? [];
+      const pagination = responseData?.pagination ?? responseData?.meta ?? {};
+
+      if (!Array.isArray(domains)) {
+        logger.warn({ responseKeys: Object.keys(responseData || {}), raw: JSON.stringify(raw).slice(0, 500) }, "Unexpected UD API response structure — trying to extract domains");
+        // If the response itself is an array, use it directly
+        if (Array.isArray(raw)) {
+          for (const d of raw) {
+            const name = (d.name || d.domain || d.domainName || "").toLowerCase().trim();
+            if (name && name.includes(".")) {
+              allDomains.push({ name, source: "unstoppable" });
+            }
+          }
+          hasMore = false;
+          break;
         }
+        break;
       }
 
-      hasMore = data.pagination?.hasMore ?? false;
-      offset = data.pagination?.nextOffset ?? offset + 500;
+      let addedThisPage = 0;
+      for (const d of domains) {
+        // Handle various possible field names from the API
+        const name = (d.name || d.domain || d.domainName || "").toLowerCase().trim();
+        if (!name || !name.includes(".")) continue;
+
+        // Only keep traditional TLD domains
+        const tld = name.split(".").pop();
+        if (!tld || !TRADITIONAL_TLDS.includes(tld)) continue;
+
+        allDomains.push({
+          name,
+          source: "unstoppable",
+        });
+        addedThisPage++;
+      }
+
+      logger.debug({ page: pageCount, domainsOnPage: domains.length, accepted: addedThisPage, totalSoFar: allDomains.length }, "UD page processed");
+
+      // Determine if there are more pages
+      hasMore = pagination?.hasMore ?? pagination?.has_more ?? (domains.length >= PAGE_SIZE);
+      offset = pagination?.nextOffset ?? pagination?.next_offset ?? (offset + PAGE_SIZE);
       pageCount++;
 
-      // Small delay between pages
+      // If we got 0 domains on this page, stop
+      if (domains.length === 0) {
+        hasMore = false;
+      }
+
+      // Small delay between pages to be respectful
       if (hasMore) {
-        await new Promise((r) => setTimeout(r, 200));
+        await new Promise((r) => setTimeout(r, 300));
       }
     } catch (err) {
       logger.error({ err, offset, pageCount }, "Unstoppable Domains API fetch failed");
@@ -118,6 +142,6 @@ export async function fetchUnstoppableDomains(): Promise<DomainFeedItem[] | null
     }
   }
 
-  logger.info({ total: allDomains.length, pages: pageCount }, "Unstoppable Domains fetch complete");
+  logger.info({ total: allDomains.length, pages: pageCount }, "Unstoppable Domains fetch complete — traditional domains only");
   return allDomains.length > 0 ? allDomains : null;
 }

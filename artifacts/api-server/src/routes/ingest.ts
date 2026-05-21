@@ -474,10 +474,10 @@ router.post("/ingest", async (req, res) => {
       let qualifyingCandidates = candidates.slice(0, 2000);
 
       if (qualifyingCandidates.length < 100 && items.length > 0) {
-        req.log.info({ strict: qualifyingCandidates.length }, "Strict filter too aggressive — using relaxed filter to reach 100+ domains");
+        req.log.info({ strict: qualifyingCandidates.length, raw: items.length }, "Strict filter too aggressive — using relaxed filter to reach 100+ domains");
 
-        // Relaxed filter: keep any domain that is short, alpha-only, with a valuable TLD
-        const VALUABLE_TLDS = new Set(["com", "io", "ai", "co", "net", "org", "app", "dev", "xyz"]);
+        // Relaxed filter: keep any traditional domain with a valuable TLD
+        const VALUABLE_TLDS = new Set(["com", "io", "ai", "co", "net", "org", "app", "dev", "xyz", "me", "info", "cc"]);
         const alreadyQualified = new Set(qualifyingCandidates.map((c) => c.name));
 
         const relaxedItems: typeof qualifyingCandidates = [];
@@ -488,15 +488,18 @@ router.post("/ingest", async (req, res) => {
           const tld = parts[parts.length - 1];
           const sld = parts.slice(0, parts.length - 1).join("");
 
-          // Basic quality filters (much less strict)
-          if (sld.length < 3 || sld.length > 14) continue;
-          if (!/^[a-z]+$/.test(sld)) continue;
+          // Basic quality filters — accept traditional domains
+          if (sld.length < 3 || sld.length > 20) continue;
+          // Allow letters, numbers, hyphens (real domains have these)
+          if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(sld)) continue;
           if (!VALUABLE_TLDS.has(tld)) continue;
 
-          // Give it a basic score based on length and TLD
-          const tldBonus = tld === "com" ? 12 : tld === "ai" ? 10 : tld === "io" ? 8 : tld === "co" ? 6 : 4;
-          const lengthBonus = sld.length <= 4 ? 15 : sld.length <= 6 ? 10 : sld.length <= 8 ? 5 : 0;
-          const baseScore = 35 + tldBonus + lengthBonus;
+          // Score: prefer short alpha-only .com domains, penalize hyphens/numbers
+          const tldBonus = tld === "com" ? 15 : tld === "ai" ? 12 : tld === "io" ? 10 : tld === "co" ? 8 : tld === "net" ? 7 : 4;
+          const lengthBonus = sld.length <= 4 ? 20 : sld.length <= 6 ? 12 : sld.length <= 8 ? 6 : sld.length <= 10 ? 3 : 0;
+          const alphaOnlyBonus = /^[a-z]+$/.test(sld) ? 10 : 0;
+          const noHyphenBonus = !sld.includes("-") ? 5 : 0;
+          const baseScore = 30 + tldBonus + lengthBonus + alphaOnlyBonus + noHyphenBonus;
 
           relaxedItems.push({
             name: item.name,
@@ -504,21 +507,21 @@ router.post("/ingest", async (req, res) => {
             tld,
             tier: "unclassified" as const,
             localScore: Math.min(100, baseScore),
-            pronounceable: true,
+            pronounceable: /^[a-z]+$/.test(sld),
             charCount: sld.length,
           });
         }
 
-        // Sort relaxed items by score and length (shorter = better)
+        // Sort relaxed items by score descending, then by length ascending
         relaxedItems.sort((a, b) => b.localScore - a.localScore || a.charCount - b.charCount);
 
-        // Merge: strict results first, then fill with relaxed to reach at least 100
-        const needed = Math.max(0, 100 - qualifyingCandidates.length);
+        // Always add at least 200 relaxed results (or all if fewer) to ensure we hit 100+
+        const toAdd = Math.max(200, 100 - qualifyingCandidates.length);
         qualifyingCandidates = [
           ...qualifyingCandidates,
-          ...relaxedItems.slice(0, Math.max(needed, 200)),
+          ...relaxedItems.slice(0, toAdd),
         ];
-        req.log.info({ final: qualifyingCandidates.length, relaxedAdded: relaxedItems.slice(0, Math.max(needed, 200)).length }, "Relaxed filter applied");
+        req.log.info({ final: qualifyingCandidates.length, relaxedAdded: Math.min(toAdd, relaxedItems.length), relaxedAvailable: relaxedItems.length }, "Relaxed filter applied — traditional domains included");
       }
 
       // Only persist the qualifying domains (not every raw domain)
