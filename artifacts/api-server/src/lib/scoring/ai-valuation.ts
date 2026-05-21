@@ -187,30 +187,38 @@ export function localPreScore(domain: string): LocalPreScore | null {
   let tier: PriorityTier = "unclassified";
   let baseScore = 30;
 
+  // ── AI keyword boost: domains starting or ending with "ai" get premium treatment ──
+  const hasAI = sld.startsWith("ai") || sld.endsWith("ai");
+
   // Priority 1: Pure single keyword (HIGHEST — real English words with market demand)
   if (isSingleWord(sld)) {
     tier = "priority1";
-    baseScore = 85;
+    baseScore = hasAI ? 95 : 85; // AI-keyword domains score even higher
   }
   // Priority 3: two-word compound (e.g., "initjob", "cloudmesh") — both parts must be real words
   else if (isTwoWordCompound(sld)) {
     tier = "priority3";
-    baseScore = 65;
+    baseScore = hasAI ? 75 : 65; // AI compounds get boosted
   }
   // Priority 2: word + letter(s) (e.g., "foodx", "stacky") — base must be a real word
   else if (isWordPlusLetter(sld)) {
     tier = "priority2";
-    baseScore = 55;
+    baseScore = hasAI ? 65 : 55; // AI word+letter get boosted
   }
   // Special: exactly 4 letters .com and pronounceable (premium short .com)
   else if (sld.length === 4 && tld === "com" && pronounceable) {
     tier = "five_letter";
-    baseScore = 60;
+    baseScore = hasAI ? 70 : 60;
   }
   // Special: exactly 5 letters and pronounceable (only if it looks like a real word)
   else if (sld.length === 5 && pronounceable && hasGoodStructure(sld)) {
     tier = "five_letter";
-    baseScore = 50;
+    baseScore = hasAI ? 60 : 50;
+  }
+  // Special: any domain containing "ai" that's pronounceable and short — it has trend value
+  else if (hasAI && pronounceable && sld.length <= 7 && hasGoodStructure(sld)) {
+    tier = "priority2";
+    baseScore = 58;
   }
   else {
     // REJECT: random gibberish like "gseibap", "fospes", "gjihk" etc.
@@ -249,7 +257,7 @@ export function localPreScore(domain: string): LocalPreScore | null {
  */
 export function preScoreAndFilter(
   domains: Array<{ name: string }>,
-  maxCandidates = 1000,
+  maxCandidates = 2000,
 ): LocalPreScore[] {
   // Bucket domains by priority tier
   const fourLetterCom: LocalPreScore[] = [];

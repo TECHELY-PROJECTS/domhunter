@@ -285,10 +285,27 @@ export default function DomainDetail() {
                 domain.status === "AVAILABLE" ? "bg-green-900/40 text-green-300 border-green-700" :
                 domain.status === "EXPIRING"  ? "bg-orange-900/40 text-orange-300 border-orange-700" :
                 domain.status === "AUCTION"   ? "bg-yellow-900/40 text-yellow-300 border-yellow-700" :
+                domain.status === "EXPIRED"   ? "bg-blue-900/40 text-blue-300 border-blue-700" :
+                domain.status === "TAKEN"     ? "bg-red-900/40 text-red-300 border-red-700" :
                 "bg-muted text-muted-foreground border-border"
               }`}>
-                {domain.status}
+                {domain.status === "EXPIRED" ? "DROPPING" :
+                 domain.status === "TAKEN" ? "REGISTERED" :
+                 domain.status}
               </span>
+              {m?.expiresDate && domain.status !== "TAKEN" && (
+                <span className="text-xs text-muted-foreground">
+                  {(() => {
+                    const ms = new Date(m.expiresDate).getTime() - Date.now();
+                    const days = Math.round(ms / 86_400_000);
+                    if (days < 0) return "Available now";
+                    if (days === 0) return "Available today";
+                    if (days === 1) return "Available in 1 day";
+                    if (days <= 7) return `Available in ${days} days`;
+                    return `Drops ${new Date(m.expiresDate).toLocaleDateString()}`;
+                  })()}
+                </span>
+              )}
             </div>
             {m?.aiReason && (
               <p className="mt-3 text-muted-foreground italic text-sm max-w-xl">

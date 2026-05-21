@@ -423,8 +423,8 @@ router.post("/ingest", async (req, res) => {
       const candidates = preScoreAndFilter(items, items.length); // score ALL items
       req.log.info({ candidates: candidates.length, raw: items.length }, "Local pre-scoring complete");
 
-      // Only keep the top 1000 qualifying domains (best of the best)
-      const qualifyingCandidates = candidates.slice(0, 1000);
+      // Only keep the top 2000 qualifying domains (best of the best)
+      const qualifyingCandidates = candidates.slice(0, 2000);
 
       // Only persist the qualifying domains (not every domain from the CSV)
       const qualifyingItems = qualifyingCandidates.map((c) => ({
@@ -433,7 +433,7 @@ router.post("/ingest", async (req, res) => {
       } as DomainFeedItem));
 
       req.log.info({ qualifying: qualifyingItems.length, total: items.length }, "Persisting only qualifying domains");
-      const { count: inserted, newNames } = await persistFeedItems(qualifyingItems, "EXPIRED");
+      const { count: inserted, newNames } = await persistFeedItems(qualifyingItems, "EXPIRING");
 
       // AI valuation: select top 30 most valuable domains
       let top30 = null;

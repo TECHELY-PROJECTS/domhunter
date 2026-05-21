@@ -303,7 +303,7 @@ export default function Home() {
                         <div>
                           <p className="font-mono font-bold">{domain.name}</p>
                           <div className="flex gap-2 mt-1">
-                            <Badge variant="outline" className="text-[10px] uppercase">{domain.status}</Badge>
+                            <Badge variant="outline" className="text-[10px] uppercase">{domain.status === "EXPIRED" ? "DROPPING" : domain.status === "TAKEN" ? "REGISTERED" : domain.status}</Badge>
                             {domain.metrics?.rarityTier && (
                               <Badge variant="secondary" className="text-[10px] uppercase text-primary">{domain.metrics.rarityTier}</Badge>
                             )}

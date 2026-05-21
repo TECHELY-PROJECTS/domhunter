@@ -192,14 +192,23 @@ export default function Explore() {
     return `$${v}`;
   };
 
-  const formatExpiry = (date?: string | null) => {
-    if (!date) return "—";
-    const ms = new Date(date).getTime() - Date.now();
+  const formatExpiry = (date?: string | null, metricsExpiry?: string | null) => {
+    const expiryStr = date || metricsExpiry;
+    if (!expiryStr) return "—";
+    const ms = new Date(expiryStr).getTime() - Date.now();
     const hours = Math.round(ms / 3_600_000);
-    if (hours < 0) return <span className="text-muted-foreground">Ended</span>;
+    if (hours < 0) return <span className="text-green-400 font-bold">Available</span>;
     if (hours < 24) return <span className="text-red-400 font-bold">{hours}h left</span>;
     if (hours < 72) return <span className="text-orange-400">{Math.round(hours / 24)}d left</span>;
-    return new Date(date).toLocaleDateString();
+    const days = Math.round(hours / 24);
+    if (days <= 30) return <span className="text-yellow-400">{days}d left</span>;
+    return new Date(expiryStr).toLocaleDateString();
+  };
+
+  const formatStatus = (status: string) => {
+    if (status === "EXPIRED") return "DROPPING";
+    if (status === "TAKEN") return "REGISTERED";
+    return status;
   };
 
   const totalPages = Math.ceil(total / LIMIT);
@@ -532,7 +541,7 @@ export default function Explore() {
                       </TableCell>
 
                       <TableCell className="text-center py-2.5 text-xs">
-                        {formatExpiry(d.auctionEndAt)}
+                        {formatExpiry(d.auctionEndAt, d.metrics?.expiresDate)}
                       </TableCell>
 
                       <TableCell className="text-center py-2.5" onClick={e => e.stopPropagation()}>
