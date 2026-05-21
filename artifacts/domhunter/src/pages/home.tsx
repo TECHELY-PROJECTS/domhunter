@@ -36,7 +36,7 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ source: "dropcatch" }),
       });
-      const data = await res.json() as { message?: string; error?: string; top30?: unknown[]; needsUpload?: boolean };
+      const data = await res.json() as { message?: string; error?: string; top30?: unknown[]; needsUpload?: boolean; sources?: string[] };
       if (!res.ok) {
         const detail = data.error ?? "Unknown error";
         toast({
@@ -46,15 +46,16 @@ export default function Home() {
         });
       } else if (data.needsUpload) {
         toast({
-          title: "Upload Required",
-          description: "Auto-download not available. Download 'Dropping Today' CSV from dropcatch.com/downloads and click 'Upload CSV'.",
+          title: "Setup Required",
+          description: "Set UNSTOPPABLE_API_KEY or EXPIREDDOMAINS_SESSION env vars, or upload a CSV manually.",
         });
       } else {
         const top30Count = Array.isArray(data.top30) ? data.top30.length : 0;
+        const sourcesInfo = Array.isArray(data.sources) ? ` [${data.sources.join(" + ")}]` : "";
         toast({
-          title: "Sync Complete",
+          title: "Force Sync Complete",
           description: top30Count > 0
-            ? `${data.message} — ${top30Count} top picks identified!`
+            ? `${data.message}${sourcesInfo}`
             : data.message ?? "Domains fetched.",
         });
         refetchAll();
