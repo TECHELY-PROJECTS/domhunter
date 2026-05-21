@@ -391,9 +391,11 @@ router.post("/ingest", async (req, res) => {
     }
 
     if (source === "dropcatch") {
-      req.log.info("Processing dropping domains...");
+      req.log.info("Force Sync: fetching domains from all sources...");
 
-      let items: DomainFeedItem[];
+      let items: DomainFeedItem[] = [];
+      let udCount = 0;
+      let expiredCount = 0;
 
       // Check if CSV content was uploaded in the request body
       const csvContent = (req.body as any).csv as string | undefined;
@@ -403,19 +405,46 @@ router.post("/ingest", async (req, res) => {
         req.log.info("Parsing uploaded CSV...");
         items = parseUploadedCSV(csvContent);
       } else {
-        // Try Unstoppable Domains API first (automatic, no manual work)
-        req.log.info("Trying Unstoppable Domains pending-delete API...");
+        // ── SOURCE 1: Unstoppable Domains API (primary — pending-delete domains) ──
+        req.log.info("Fetching from Unstoppable Domains pending-delete API...");
         const udItems = await fetchUnstoppableDomains();
         if (udItems && udItems.length > 0) {
-          req.log.info({ count: udItems.length }, "Fetched from Unstoppable Domains API");
-          items = udItems;
+          req.log.info({ count: udItems.length }, "Unstoppable Domains: fetched pending-delete domains");
+          items.push(...udItems);
+          udCount = udItems.length;
         } else {
-          // Fallback: try DropCatch CSV
+          req.log.warn("Unstoppable Domains API returned no results or UNSTOPPABLE_API_KEY not set");
+        }
+
+        // ── SOURCE 2: ExpiredDomains.net (secondary — recently deleted domains) ──
+        const sessionCookie = process.env.EXPIREDDOMAINS_SESSION ?? "";
+        if (sessionCookie) {
+          req.log.info("Fetching from expireddomains.net (multi-TLD)...");
+          // Rotate page offset to always get fresh domains
+          const stored = await db.query.domainsTable.findMany({ columns: { name: true } });
+          const pageOffset = Math.floor(stored.length / 25) % 40;
+          try {
+            const expiredItems = await fetchExpiredDomainsScrape(sessionCookie, 4, pageOffset, ["com", "io", "net", "co", "ai"]);
+            if (expiredItems.length > 0) {
+              req.log.info({ count: expiredItems.length }, "ExpiredDomains.net: fetched deleted domains");
+              items.push(...expiredItems);
+              expiredCount = expiredItems.length;
+            }
+          } catch (err) {
+            req.log.warn({ err }, "ExpiredDomains.net scrape failed — continuing with other sources");
+          }
+        } else {
+          req.log.info("EXPIREDDOMAINS_SESSION not set — skipping expireddomains.net");
+        }
+
+        // ── SOURCE 3: Fallback to DropCatch CSV if no domains from above ──
+        if (items.length === 0) {
+          req.log.info("No domains from primary sources, trying DropCatch CSV fallback...");
           const fetched = await fetchDropCatchCSV();
           if (!fetched) {
             return res.status(200).json({
               message: "Auto-fetch unavailable — please use the Upload CSV button.",
-              error: "Could not fetch domains automatically. Set UNSTOPPABLE_API_KEY or download CSV from dropcatch.com/downloads and click 'Upload CSV'.",
+              error: "Could not fetch domains automatically. Set UNSTOPPABLE_API_KEY or EXPIREDDOMAINS_SESSION, or upload CSV manually.",
               needsUpload: true,
               ingested: 0,
               top30: [],
@@ -425,20 +454,28 @@ router.post("/ingest", async (req, res) => {
         }
       }
 
-      req.log.info({ rawCount: items.length }, "DropCatch domains pre-filtered (length ≤11, alpha-only, valuable TLDs)");
+      // Deduplicate by domain name (sources may overlap)
+      const seen = new Set<string>();
+      items = items.filter((item) => {
+        const key = item.name.toLowerCase();
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
 
-      // ── STRICT FILTERING: Only persist top 1000 qualifying domains ──────
-      // Run local pre-scoring to identify truly valuable candidates
+      req.log.info({ rawCount: items.length }, "Combined domains from all sources (deduplicated)");
+
+      // ── STRICT FILTERING: Pre-score and keep only the best candidates ──────
       const candidates = preScoreAndFilter(items, items.length); // score ALL items
       req.log.info({ candidates: candidates.length, raw: items.length }, "Local pre-scoring complete");
 
       // Only keep the top 2000 qualifying domains (best of the best)
       const qualifyingCandidates = candidates.slice(0, 2000);
 
-      // Only persist the qualifying domains (not every domain from the CSV)
+      // Only persist the qualifying domains (not every raw domain)
       const qualifyingItems = qualifyingCandidates.map((c) => ({
         name: c.name,
-        source: "dropcatch",
+        source: "force_sync",
       } as DomainFeedItem));
 
       req.log.info({ qualifying: qualifyingItems.length, total: items.length }, "Persisting only qualifying domains");
@@ -464,13 +501,20 @@ router.post("/ingest", async (req, res) => {
         await inlineEnrichDomains(enrichTargets);
       }
 
+      const sourcesSummary = [];
+      if (udCount > 0) sourcesSummary.push(`Unstoppable(${udCount})`);
+      if (expiredCount > 0) sourcesSummary.push(`ExpiredDomains(${expiredCount})`);
+      if (csvContent) sourcesSummary.push("CSV Upload");
+      if (sourcesSummary.length === 0) sourcesSummary.push("DropCatch");
+
       return res.status(202).json({
-        message: `DropCatch: ${items.length} raw → ${qualifyingItems.length} qualifying → ${inserted} new → ${top30?.length ?? 0} top picks`,
+        message: `Force Sync [${sourcesSummary.join(" + ")}]: ${items.length} raw → ${qualifyingItems.length} qualifying → ${inserted} new → ${top30?.length ?? 0} top picks`,
         ingested: inserted,
         preFiltered: items.length,
         candidates: qualifyingCandidates.length,
         top30: top30 ?? [],
         enriched: enrichTargets.length,
+        sources: sourcesSummary,
       });
     }
 
