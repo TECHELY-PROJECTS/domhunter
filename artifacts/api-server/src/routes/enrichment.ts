@@ -12,7 +12,7 @@ import {
   getRarityTier,
   tldScore,
 } from "../lib/scoring/index";
-import { aiScoreDomain } from "../lib/ai/client";
+import { aiScoreDomain, aiDomainStrategy } from "../lib/ai/client";
 
 const router: IRouter = Router();
 
@@ -52,6 +52,22 @@ router.post("/domains/:fqdn/enrich", async (req, res) => {
 
     // Run trademark/UDRP check (uses RDAP registrar info)
     const trademarkResult = await checkTrademarkRisk(fqdn, rdap.registrar);
+
+    // Run AI domain strategy analysis (DeepSeek R1 reasoning model)
+    let strategyResult = null;
+    try {
+      strategyResult = await aiDomainStrategy(fqdn, {
+        age: rdap.ageYears ?? domain.metrics?.domainAge ?? undefined,
+        backlinks: bl ?? undefined,
+        da: da ?? undefined,
+        rarityScore: domain.metrics?.rarityScore ?? undefined,
+        niche: aiVal?.niche ?? domain.metrics?.niche ?? undefined,
+        registrar: rdap.registrar ?? domain.metrics?.registrar ?? undefined,
+      });
+      req.log.info({ fqdn, hasStrategy: !!strategyResult }, "Domain strategy analysis complete");
+    } catch (err) {
+      req.log.warn({ fqdn, err }, "Domain strategy analysis failed (non-critical)");
+    }
 
     const breakdown = calculateRarityScore({
       name: domain.sld,
@@ -147,6 +163,7 @@ router.post("/domains/:fqdn/enrich", async (req, res) => {
           shouldAvoid: trademarkResult.shouldAvoid,
           matches: trademarkResult.matches,
         },
+        strategy: strategyResult,
         scoring: breakdown,
       },
     });

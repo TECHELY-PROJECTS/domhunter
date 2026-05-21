@@ -12,7 +12,7 @@ import { useQueryClient, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
-import { ExternalLink, Star, Zap, RefreshCw, Archive, Bell, ShieldAlert } from "lucide-react";
+import { ExternalLink, Star, Zap, RefreshCw, Archive, Bell, ShieldAlert, Brain } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 interface TrademarkMatch {
@@ -49,6 +49,21 @@ interface EnrichResult {
       reason: string;
       shouldAvoid: boolean;
       matches: TrademarkMatch[];
+    } | null;
+    strategy: {
+      possibilities: string[];
+      bestUseCase: string;
+      flippingStrategy: string;
+      targetBuyers: string[];
+      pricingStrategy: {
+        quickFlip: number;
+        midTerm: number;
+        longTerm: number;
+      };
+      developmentIdeas: string[];
+      marketTiming: string;
+      competitorDomains: string[];
+      overallVerdict: string;
     } | null;
     scoring: {
       length: number;
@@ -648,6 +663,135 @@ export default function DomainDetail() {
                 <p className="text-green-300 text-sm font-medium flex items-center gap-2">
                   <span className="text-lg">✅</span> No trademark conflicts detected — safe to purchase.
                 </p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ── AI DOMAIN STRATEGY & FLIPPING ANALYSIS ── */}
+      {enrichResult?.enriched?.strategy && (
+        <Card className="border-2 border-indigo-600/40 bg-indigo-950/10">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-sm text-indigo-400">
+              <Brain className="w-5 h-5" />
+              AI Domain Strategy & Flipping Analysis
+              <span className="ml-auto text-[10px] px-2 py-0.5 rounded-full bg-indigo-900/60 border border-indigo-700 text-indigo-300 font-normal">
+                DeepSeek R1
+              </span>
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            {/* Overall Verdict */}
+            <div className="p-4 bg-indigo-900/30 border border-indigo-700/40 rounded-lg">
+              <p className="text-indigo-200 text-sm font-medium leading-relaxed">
+                {enrichResult.enriched.strategy.overallVerdict}
+              </p>
+            </div>
+
+            {/* Possibilities */}
+            <div>
+              <p className="text-xs uppercase tracking-widest text-muted-foreground mb-3">What This Domain Can Be Used For</p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {enrichResult.enriched.strategy.possibilities.map((p, i) => (
+                  <div key={i} className="flex items-start gap-2 p-2.5 rounded-lg border border-border bg-card/50">
+                    <span className="text-indigo-400 font-bold text-xs mt-0.5">{i + 1}.</span>
+                    <span className="text-sm text-foreground">{p}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Best Use Case */}
+            <div>
+              <p className="text-xs uppercase tracking-widest text-muted-foreground mb-2">Best Use Case</p>
+              <p className="text-sm text-foreground bg-card/50 border border-border rounded-lg p-3 leading-relaxed">
+                {enrichResult.enriched.strategy.bestUseCase}
+              </p>
+            </div>
+
+            {/* Flipping Strategy */}
+            <div>
+              <p className="text-xs uppercase tracking-widest text-muted-foreground mb-2">Flipping Strategy</p>
+              <div className="p-4 bg-green-900/20 border border-green-700/40 rounded-lg">
+                <p className="text-sm text-green-200 leading-relaxed">
+                  {enrichResult.enriched.strategy.flippingStrategy}
+                </p>
+              </div>
+            </div>
+
+            {/* Pricing Strategy */}
+            <div>
+              <p className="text-xs uppercase tracking-widest text-muted-foreground mb-3">Pricing Strategy</p>
+              <div className="grid grid-cols-3 gap-3">
+                <div className="text-center p-3 rounded-lg border border-amber-700/40 bg-amber-900/20">
+                  <p className="text-xs text-amber-300/70">Quick Flip (30d)</p>
+                  <p className="text-lg font-bold text-amber-300 font-mono mt-1">
+                    ${enrichResult.enriched.strategy.pricingStrategy.quickFlip.toLocaleString()}
+                  </p>
+                </div>
+                <div className="text-center p-3 rounded-lg border border-blue-700/40 bg-blue-900/20">
+                  <p className="text-xs text-blue-300/70">Mid-Term (3-6mo)</p>
+                  <p className="text-lg font-bold text-blue-300 font-mono mt-1">
+                    ${enrichResult.enriched.strategy.pricingStrategy.midTerm.toLocaleString()}
+                  </p>
+                </div>
+                <div className="text-center p-3 rounded-lg border border-purple-700/40 bg-purple-900/20">
+                  <p className="text-xs text-purple-300/70">Long-Term (1-2yr)</p>
+                  <p className="text-lg font-bold text-purple-300 font-mono mt-1">
+                    ${enrichResult.enriched.strategy.pricingStrategy.longTerm.toLocaleString()}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* Target Buyers */}
+              <div>
+                <p className="text-xs uppercase tracking-widest text-muted-foreground mb-2">Target Buyers</p>
+                <div className="space-y-1.5">
+                  {enrichResult.enriched.strategy.targetBuyers.map((buyer, i) => (
+                    <div key={i} className="flex items-center gap-2 text-sm">
+                      <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 shrink-0" />
+                      <span className="text-foreground">{buyer}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Development Ideas */}
+              <div>
+                <p className="text-xs uppercase tracking-widest text-muted-foreground mb-2">Value-Add Before Selling</p>
+                <div className="space-y-1.5">
+                  {enrichResult.enriched.strategy.developmentIdeas.map((idea, i) => (
+                    <div key={i} className="flex items-center gap-2 text-sm">
+                      <span className="w-1.5 h-1.5 rounded-full bg-green-400 shrink-0" />
+                      <span className="text-foreground">{idea}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Market Timing */}
+            <div>
+              <p className="text-xs uppercase tracking-widest text-muted-foreground mb-2">Market Timing</p>
+              <p className="text-sm text-muted-foreground bg-card/50 border border-border rounded-lg p-3">
+                {enrichResult.enriched.strategy.marketTiming}
+              </p>
+            </div>
+
+            {/* Competitor Domains */}
+            {enrichResult.enriched.strategy.competitorDomains.length > 0 && (
+              <div>
+                <p className="text-xs uppercase tracking-widest text-muted-foreground mb-2">Comparable Sales & Listings</p>
+                <div className="flex flex-wrap gap-2">
+                  {enrichResult.enriched.strategy.competitorDomains.map((comp, i) => (
+                    <span key={i} className="text-xs px-3 py-1.5 rounded-full border border-border bg-muted/50 text-muted-foreground font-mono">
+                      {comp}
+                    </span>
+                  ))}
+                </div>
               </div>
             )}
           </CardContent>
