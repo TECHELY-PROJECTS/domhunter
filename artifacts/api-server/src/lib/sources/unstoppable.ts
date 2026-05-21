@@ -19,8 +19,12 @@ import { logger } from "../logger";
 
 const UD_API_URL = "https://api.unstoppabledomains.com/mcp/v1/actions/ud_expireds_list";
 
-// Only traditional ICANN TLDs — these are the valuable ones for domain investing
-const TRADITIONAL_TLDS = ["com", "net", "org", "io", "co", "ai", "app", "dev", "xyz", "me", "info", "cc", "biz"];
+// Unstoppable Domains web3 TLDs that have resale value
+// NOTE: UD's pending-delete API returns web3 domains (not traditional ICANN domains)
+// We accept all of them and filter later based on what makes sense for flipping
+const ACCEPTED_TLDS = ["com", "net", "org", "io", "co", "ai", "app", "dev", "xyz", "me", "info", "cc", "biz",
+  // Web3 TLDs from Unstoppable Domains marketplace
+  "x", "crypto", "wallet", "nft", "dao", "blockchain", "bitcoin", "888", "zil"];
 const MAX_PAGES = 20;
 const PAGE_SIZE = 500;
 
@@ -46,7 +50,6 @@ export async function fetchUnstoppableDomains(): Promise<DomainFeedItem[] | null
   while (hasMore && pageCount < MAX_PAGES) {
     try {
       const requestBody = {
-        tlds: TRADITIONAL_TLDS,
         sortBy: "deletionAt",
         sortDirection: "ASC",
         limit: PAGE_SIZE,
@@ -107,11 +110,11 @@ export async function fetchUnstoppableDomains(): Promise<DomainFeedItem[] | null
       for (const d of domains) {
         // Handle various possible field names from the API
         const name = (d.name || d.domain || d.domainName || "").toLowerCase().trim();
-        if (!name || !name.includes(".")) continue;
+        if (!name) continue;
 
-        // Only keep traditional TLD domains
-        const tld = name.split(".").pop();
-        if (!tld || !TRADITIONAL_TLDS.includes(tld)) continue;
+        // Accept all domains (web3 and traditional) — the ingest route filters
+        // If no dot, it's likely a web3 domain label — skip (we need full names)
+        if (!name.includes(".")) continue;
 
         allDomains.push({
           name,

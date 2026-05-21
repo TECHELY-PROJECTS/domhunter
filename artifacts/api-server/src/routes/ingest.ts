@@ -477,7 +477,9 @@ router.post("/ingest", async (req, res) => {
         req.log.info({ strict: qualifyingCandidates.length, raw: items.length }, "Strict filter too aggressive — using relaxed filter to reach 100+ domains");
 
         // Relaxed filter: keep any traditional domain with a valuable TLD
-        const VALUABLE_TLDS = new Set(["com", "io", "ai", "co", "net", "org", "app", "dev", "xyz", "me", "info", "cc"]);
+        const VALUABLE_TLDS = new Set(["com", "io", "ai", "co", "net", "org", "app", "dev", "xyz", "me", "info", "cc",
+          // Web3 TLDs (from Unstoppable Domains — have resale value in web3 market)
+          "x", "crypto", "wallet", "nft", "dao", "blockchain", "bitcoin", "888", "zil"]);
         const alreadyQualified = new Set(qualifyingCandidates.map((c) => c.name));
 
         const relaxedItems: typeof qualifyingCandidates = [];
@@ -488,9 +490,9 @@ router.post("/ingest", async (req, res) => {
           const tld = parts[parts.length - 1];
           const sld = parts.slice(0, parts.length - 1).join("");
 
-          // Basic quality filters — accept traditional domains
-          if (sld.length < 3 || sld.length > 20) continue;
-          // Allow letters, numbers, hyphens (real domains have these)
+          // Basic quality filters — accept traditional and web3 domains
+          if (sld.length < 2 || sld.length > 20) continue;
+          // Allow letters, numbers, hyphens (real domains and web3 labels have these)
           if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(sld)) continue;
           if (!VALUABLE_TLDS.has(tld)) continue;
 
