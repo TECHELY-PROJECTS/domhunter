@@ -143,14 +143,29 @@ function isWordPlusLetter(sld: string): boolean {
   return false;
 }
 
-/** Detect two-word compound (e.g., "mintleaf", "cloudmesh") — BOTH parts must be in POWER_WORDS */
+/** 
+ * Detect two-word compound (e.g., "mintleaf", "cloudmesh", "initjob") 
+ * At least ONE part must be in POWER_WORDS, the other must be a valid short English word
+ * (pronounceable, good structure, 3+ letters). This catches real compounds without
+ * letting gibberish through.
+ */
 function isTwoWordCompound(sld: string): boolean {
   if (sld.length < 6) return false;
-  // Try splitting at every position — both halves must be known words
+  // Try splitting at every position
   for (let i = 3; i <= sld.length - 3; i++) {
     const left = sld.slice(0, i);
     const right = sld.slice(i);
+    
+    // Best case: both in dictionary
     if (POWER_WORDS.has(left) && POWER_WORDS.has(right)) {
+      return true;
+    }
+    
+    // Good case: one in dictionary, other is a valid pronounceable word (3+ letters)
+    if (POWER_WORDS.has(left) && right.length >= 3 && isPronouunceable(right) && hasGoodStructure(right)) {
+      return true;
+    }
+    if (POWER_WORDS.has(right) && left.length >= 3 && isPronouunceable(left) && hasGoodStructure(left)) {
       return true;
     }
   }
