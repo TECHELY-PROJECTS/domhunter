@@ -6,6 +6,7 @@ import { randomUUID } from "crypto";
 import { rdapLookup } from "../lib/enrichment/rdap";
 import { getPageRank } from "../lib/enrichment/openpagerank";
 import { getBacklinks } from "../lib/enrichment/openlinks";
+import { checkTrademarkRisk } from "../lib/enrichment/trademark";
 import {
   calculateRarityScore,
   getRarityTier,
@@ -49,6 +50,9 @@ router.post("/domains/:fqdn/enrich", async (req, res) => {
       backlinks?.referringDomains ?? domain.metrics?.referringDomains ?? null;
     const trendScore = domain.metrics?.trendScore ?? null;
 
+    // Run trademark/UDRP check (uses RDAP registrar info)
+    const trademarkResult = await checkTrademarkRisk(fqdn, rdap.registrar);
+
     const breakdown = calculateRarityScore({
       name: domain.sld,
       tld: domain.tld,
@@ -77,8 +81,17 @@ router.post("/domains/:fqdn/enrich", async (req, res) => {
       brandScore: aiVal?.brandScore ?? domain.metrics?.brandScore ?? null,
       estimatedValue: aiVal?.estimatedValue ?? domain.metrics?.estimatedValue ?? null,
       niche: aiVal?.niche ?? domain.metrics?.niche ?? null,
-      recommendation: aiVal?.recommendation ?? domain.metrics?.recommendation ?? null,
-      aiReason: aiVal?.reason ?? domain.metrics?.aiReason ?? null,
+      recommendation: trademarkResult.shouldAvoid
+        ? "SKIP"
+        : (aiVal?.recommendation ?? domain.metrics?.recommendation ?? null),
+      aiReason: trademarkResult.shouldAvoid
+        ? `⚠️ UDRP RISK: ${trademarkResult.reason}`
+        : (aiVal?.reason ?? domain.metrics?.aiReason ?? null),
+      trademarkRisk: trademarkResult.riskLevel,
+      trademarkReason: trademarkResult.reason,
+      trademarkMatches: trademarkResult.matches.length > 0
+        ? JSON.stringify(trademarkResult.matches)
+        : null,
       enrichedAt: now,
       updatedAt: now,
     };
@@ -128,6 +141,12 @@ router.post("/domains/:fqdn/enrich", async (req, res) => {
               targetBuyer: aiVal.targetBuyer,
             }
           : null,
+        trademark: {
+          riskLevel: trademarkResult.riskLevel,
+          reason: trademarkResult.reason,
+          shouldAvoid: trademarkResult.shouldAvoid,
+          matches: trademarkResult.matches,
+        },
         scoring: breakdown,
       },
     });

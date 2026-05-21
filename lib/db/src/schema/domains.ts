@@ -60,6 +60,9 @@ export const metricsTable = pgTable("metrics", {
   aiReason: text("ai_reason"),
   aiScoredAt: timestamp("ai_scored_at"),
   trendScore: doublePrecision("trend_score"),
+  trademarkRisk: text("trademark_risk"), // HIGH | MEDIUM | LOW | NONE
+  trademarkReason: text("trademark_reason"),
+  trademarkMatches: text("trademark_matches"), // JSON string of matches
   enrichedAt: timestamp("enriched_at"),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

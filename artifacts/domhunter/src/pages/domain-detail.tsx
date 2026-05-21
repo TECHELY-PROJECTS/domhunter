@@ -12,8 +12,17 @@ import { useQueryClient, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
-import { ExternalLink, Star, Zap, RefreshCw, Archive, Bell } from "lucide-react";
+import { ExternalLink, Star, Zap, RefreshCw, Archive, Bell, ShieldAlert } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+
+interface TrademarkMatch {
+  mark: string;
+  source: string;
+  status?: string;
+  registrationNumber?: string;
+  owner?: string;
+  matchType: "exact" | "contains" | "similar";
+}
 
 interface EnrichResult {
   domain: {
@@ -35,6 +44,12 @@ interface EnrichResult {
     };
     opr: { rank: number; da: number } | null;
     backlinks: { totalLinks: number; referringDomains: number } | null;
+    trademark: {
+      riskLevel: "HIGH" | "MEDIUM" | "LOW" | "NONE";
+      reason: string;
+      shouldAvoid: boolean;
+      matches: TrademarkMatch[];
+    } | null;
     scoring: {
       length: number;
       tld: number;
@@ -216,7 +231,14 @@ export default function DomainDetail() {
       onSuccess: (result) => {
         setEnrichResult(result);
         queryClient.invalidateQueries({ queryKey: getGetDomainQueryKey(fqdn || "") });
-        toast({ title: "Enrichment complete", description: "RDAP, OPR, and backlink data fetched." });
+        const tmRisk = result.enriched?.trademark?.riskLevel;
+        if (tmRisk === "HIGH") {
+          toast({ title: "⚠️ UDRP Risk Detected!", description: "This domain infringes a trademark — DO NOT BUY.", variant: "destructive" });
+        } else if (tmRisk === "MEDIUM") {
+          toast({ title: "Enrichment complete", description: "⚠️ Moderate trademark risk detected. Review carefully." });
+        } else {
+          toast({ title: "Enrichment complete", description: "RDAP, OPR, backlinks, and trademark check done. No UDRP risk." });
+        }
       },
       onError: (err) => {
         toast({ title: "Enrichment failed", description: err.message, variant: "destructive" });
@@ -532,6 +554,102 @@ export default function DomainDetail() {
                 )}
               </div>
             </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ── UDRP TRADEMARK RISK ── */}
+      {enrichResult?.enriched?.trademark && (
+        <Card className={`border-2 ${
+          enrichResult.enriched.trademark.riskLevel === "HIGH"
+            ? "border-red-600 bg-red-950/30"
+            : enrichResult.enriched.trademark.riskLevel === "MEDIUM"
+              ? "border-yellow-600 bg-yellow-950/20"
+              : enrichResult.enriched.trademark.riskLevel === "LOW"
+                ? "border-orange-600/40 bg-orange-950/10"
+                : "border-green-600/40 bg-green-950/10"
+        }`}>
+          <CardHeader>
+            <CardTitle className={`flex items-center gap-2 text-sm ${
+              enrichResult.enriched.trademark.riskLevel === "HIGH"
+                ? "text-red-400"
+                : enrichResult.enriched.trademark.riskLevel === "MEDIUM"
+                  ? "text-yellow-400"
+                  : enrichResult.enriched.trademark.riskLevel === "LOW"
+                    ? "text-orange-400"
+                    : "text-green-400"
+            }`}>
+              <ShieldAlert className="w-5 h-5" />
+              UDRP Trademark Check — {enrichResult.enriched.trademark.riskLevel} RISK
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {/* Risk Banner */}
+            {enrichResult.enriched.trademark.shouldAvoid && (
+              <div className="mb-4 p-4 bg-red-900/40 border border-red-700 rounded-lg">
+                <p className="text-red-200 font-bold text-sm flex items-center gap-2">
+                  <span className="text-lg">🚫</span> DO NOT BUY THIS DOMAIN
+                </p>
+                <p className="text-red-300/80 text-xs mt-1">
+                  This domain is likely subject to a UDRP dispute and could be forcibly transferred to the trademark owner.
+                </p>
+              </div>
+            )}
+
+            {/* Reason */}
+            <p className={`text-sm mb-4 ${
+              enrichResult.enriched.trademark.shouldAvoid ? "text-red-300" : "text-muted-foreground"
+            }`}>
+              {enrichResult.enriched.trademark.reason}
+            </p>
+
+            {/* Matches */}
+            {enrichResult.enriched.trademark.matches.length > 0 && (
+              <div className="space-y-2">
+                <p className="text-xs uppercase tracking-widest text-muted-foreground">Trademark Matches Found</p>
+                {enrichResult.enriched.trademark.matches.map((match, idx) => (
+                  <div key={idx} className={`flex items-center justify-between p-3 rounded-lg border ${
+                    match.matchType === "exact"
+                      ? "border-red-700/60 bg-red-900/20"
+                      : match.matchType === "contains"
+                        ? "border-red-700/40 bg-red-900/10"
+                        : "border-yellow-700/40 bg-yellow-900/10"
+                  }`}>
+                    <div>
+                      <p className="font-mono font-bold text-sm">
+                        {match.matchType === "exact" ? "🔴" : match.matchType === "contains" ? "🟠" : "🟡"}{" "}
+                        "{match.mark}"
+                      </p>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        {match.source}
+                        {match.owner && ` • Owner: ${match.owner}`}
+                        {match.registrationNumber && ` • Reg#: ${match.registrationNumber}`}
+                      </p>
+                    </div>
+                    <div className="text-right">
+                      <span className={`text-xs px-2 py-1 rounded-full border font-medium ${
+                        match.matchType === "exact"
+                          ? "bg-red-900/60 text-red-300 border-red-700"
+                          : match.matchType === "contains"
+                            ? "bg-orange-900/60 text-orange-300 border-orange-700"
+                            : "bg-yellow-900/60 text-yellow-300 border-yellow-700"
+                      }`}>
+                        {match.matchType === "exact" ? "EXACT MATCH" : match.matchType === "contains" ? "CONTAINS MARK" : "SIMILAR"}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Safe badge */}
+            {enrichResult.enriched.trademark.riskLevel === "NONE" && (
+              <div className="p-3 bg-green-900/30 border border-green-700/40 rounded-lg">
+                <p className="text-green-300 text-sm font-medium flex items-center gap-2">
+                  <span className="text-lg">✅</span> No trademark conflicts detected — safe to purchase.
+                </p>
+              </div>
+            )}
           </CardContent>
         </Card>
       )}
