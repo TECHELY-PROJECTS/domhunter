@@ -7,6 +7,7 @@ export {
   parseDropCatchCSV,
   parseUploadedCSV,
 } from "./dropcatch";
+export { fetchUnstoppableDomains } from "./unstoppable";
 export {
   getICANNAuthToken,
   downloadComZoneFile,

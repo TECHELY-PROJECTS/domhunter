@@ -16,6 +16,7 @@ import { fetchGoDaddyRSS } from "../lib/sources/godaddy-rss";
 import { fetchNameJetRSS } from "../lib/sources/namejet-rss";
 import { fetchExpiredDomainsScrape } from "../lib/sources/expireddomains";
 import { fetchDropCatchCSV, parseUploadedCSV } from "../lib/sources/dropcatch";
+import { fetchUnstoppableDomains } from "../lib/sources/unstoppable";
 import { preScoreAndFilter, aiValuateTop30, localPreScore } from "../lib/scoring/ai-valuation";
 import { generateBrandableDomains } from "../lib/sources/brandable-generator";
 import { getPageRank } from "../lib/enrichment/openpagerank";
@@ -390,7 +391,7 @@ router.post("/ingest", async (req, res) => {
     }
 
     if (source === "dropcatch") {
-      req.log.info("Processing DropCatch dropping domains...");
+      req.log.info("Processing dropping domains...");
 
       let items: DomainFeedItem[];
 
@@ -399,21 +400,29 @@ router.post("/ingest", async (req, res) => {
 
       if (csvContent) {
         // Manual upload: parse the provided CSV content
-        req.log.info("Parsing uploaded DropCatch CSV...");
+        req.log.info("Parsing uploaded CSV...");
         items = parseUploadedCSV(csvContent);
       } else {
-        // Auto-fetch from DropCatch direct CSV download
-        const fetched = await fetchDropCatchCSV();
-        if (!fetched) {
-          return res.status(200).json({
-            message: "Auto-fetch unavailable — please use the Upload CSV button.",
-            error: "Could not auto-fetch DropCatch CSV. Download 'Dropping Today' from https://www.dropcatch.com/downloads and click 'Upload CSV'.",
-            needsUpload: true,
-            ingested: 0,
-            top30: [],
-          });
+        // Try Unstoppable Domains API first (automatic, no manual work)
+        req.log.info("Trying Unstoppable Domains pending-delete API...");
+        const udItems = await fetchUnstoppableDomains();
+        if (udItems && udItems.length > 0) {
+          req.log.info({ count: udItems.length }, "Fetched from Unstoppable Domains API");
+          items = udItems;
+        } else {
+          // Fallback: try DropCatch CSV
+          const fetched = await fetchDropCatchCSV();
+          if (!fetched) {
+            return res.status(200).json({
+              message: "Auto-fetch unavailable — please use the Upload CSV button.",
+              error: "Could not fetch domains automatically. Set UNSTOPPABLE_API_KEY or download CSV from dropcatch.com/downloads and click 'Upload CSV'.",
+              needsUpload: true,
+              ingested: 0,
+              top30: [],
+            });
+          }
+          items = fetched;
         }
-        items = fetched;
       }
 
       req.log.info({ rawCount: items.length }, "DropCatch domains pre-filtered (length ≤11, alpha-only, valuable TLDs)");
